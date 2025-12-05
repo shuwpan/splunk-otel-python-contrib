@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Add genai-util ToolCall/ToolCallResponse normalization and emit `execute_tool`
+  child spans for OpenAI tool calls (sync and streaming); update tool-call tests
+  accordingly.
+
 ## Version 2.2b0 (2025-11-25)
 
 - Fix service tier attribute names: use `GEN_AI_OPENAI_REQUEST_SERVICE_TIER` for request
