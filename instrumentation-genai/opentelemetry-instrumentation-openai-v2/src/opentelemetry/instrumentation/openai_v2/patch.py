@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import asyncio
+import inspect
 from timeit import default_timer
 from typing import Any, Optional
 
@@ -664,6 +666,7 @@ class ToolCallBuffer:
         self.span = _start_tool_call_span(
             tracer, parent_span, tool_call, tool_type
         )
+        self._ended = False
 
     def append_arguments(self, arguments):
         if not self._capture_content or arguments is None:
@@ -671,6 +674,9 @@ class ToolCallBuffer:
         self._argument_chunks.append(arguments)
 
     def finalize(self) -> tuple[GenAIToolCall, str]:
+        if self._ended:
+            return self.tool_call, self.tool_type
+
         if self._capture_content and self._argument_chunks:
             self.tool_call.arguments = "".join(self._argument_chunks)
         else:
@@ -678,7 +684,10 @@ class ToolCallBuffer:
                 self.tool_call.arguments = None
 
         if self.span:
-            self.span.end()
+            if self.span.is_recording():
+                self.span.end()
+            self.span = None
+        self._ended = True
 
         return self.tool_call, self.tool_type
 
@@ -845,7 +854,7 @@ class StreamWrapper:
                     )
                 )
 
-            self.span.end()
+                self.span.end()
             self._span_started = False
 
     def __enter__(self):
@@ -873,7 +882,13 @@ class StreamWrapper:
         return False  # Propagate the exception
 
     def close(self):
-        self.stream.close()
+        result = self.stream.close()
+        if inspect.isawaitable(result):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(result)
+            except RuntimeError:
+                asyncio.run(result)
         self.cleanup()
 
     def __iter__(self):
