@@ -74,11 +74,13 @@ def chat_completions_create(
             try:
                 result = wrapped(*args, **kwargs)
                 if is_streaming(kwargs):
-                    return StreamWrapper(result, span, logger, capture_content)
+                    return StreamWrapper(
+                        result, span, tracer, logger, capture_content
+                    )
 
                 if span.is_recording():
                     _set_response_attributes(
-                        span, result, logger, capture_content
+                        span, result, tracer, logger, capture_content
                     )
                 for choice in getattr(result, "choices", []):
                     logger.emit(choice_to_event(choice, capture_content))
@@ -131,11 +133,13 @@ def async_chat_completions_create(
             try:
                 result = await wrapped(*args, **kwargs)
                 if is_streaming(kwargs):
-                    return StreamWrapper(result, span, logger, capture_content)
+                    return StreamWrapper(
+                        result, span, tracer, logger, capture_content
+                    )
 
                 if span.is_recording():
                     _set_response_attributes(
-                        span, result, logger, capture_content
+                        span, result, tracer, logger, capture_content
                     )
                 for choice in getattr(result, "choices", []):
                     logger.emit(choice_to_event(choice, capture_content))
@@ -354,7 +358,7 @@ def _record_metrics(
 
 
 def _set_response_attributes(
-    span, result, logger: Logger, capture_content: bool
+    span, result, tracer: Tracer, logger: Logger, capture_content: bool
 ):
     set_span_attribute(
         span, GenAIAttributes.GEN_AI_RESPONSE_MODEL, result.model
@@ -394,6 +398,8 @@ def _set_response_attributes(
             result.usage.completion_tokens,
         )
 
+    _emit_tool_calls_in_response(tracer, span, result, capture_content)
+
 
 def _set_embeddings_response_attributes(
     span: Span,
@@ -423,6 +429,72 @@ def _set_embeddings_response_attributes(
             result.usage.prompt_tokens,
         )
         # Don't set output tokens for embeddings as all tokens are input tokens
+
+
+def _emit_tool_calls_in_response(
+    tracer: Tracer,
+    parent_span: Span,
+    result: Any,
+    capture_content: bool,
+) -> None:
+    for choice in getattr(result, "choices", []):
+        message = getattr(choice, "message", None)
+
+        tool_calls = None
+        if isinstance(message, dict):
+            tool_calls = message.get("tool_calls")
+        elif message is not None:
+            tool_calls = getattr(message, "tool_calls", None)
+
+        if not tool_calls:
+            continue
+
+        for tool_call in tool_calls:
+            genai_tool_call, tool_type = _normalize_tool_call(
+                tool_call, capture_content
+            )
+            _start_and_end_tool_call_span(
+                tracer, parent_span, genai_tool_call, tool_type
+            )
+
+
+def _normalize_tool_call(
+    tool_call: Any, capture_content: bool
+) -> tuple[GenAIToolCall, str]:
+    """Normalize to genai-util ToolCall and capture tool type."""
+    tool_type = getattr(tool_call, "type", None)
+    function = getattr(tool_call, "function", None)
+    if isinstance(tool_call, dict):
+        tool_type = tool_call.get("type", tool_type)
+        function = tool_call.get("function", function)
+
+    function_name = None
+    arguments = None
+    if isinstance(function, dict):
+        function_name = function.get("name")
+        arguments = function.get("arguments")
+    else:
+        function_name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+
+    if not capture_content:
+        arguments = None
+
+    tool_call_id = getattr(tool_call, "id", None)
+    if isinstance(tool_call, dict):
+        tool_call_id = tool_call.get("id", tool_call_id)
+
+    tool_call_type = tool_type or "function"
+
+    return (
+        GenAIToolCall(
+            name=function_name or "",
+            id=tool_call_id,
+            arguments=arguments,
+            provider=GenAIAttributes.GenAiSystemValues.OPENAI.value,
+        ),
+        tool_call_type,
+    )
 
 
 def _to_genai_tool_call(tool_call: Any) -> GenAIToolCall:
@@ -457,6 +529,67 @@ def _to_genai_tool_call_response(
 ) -> GenAIToolCallResponse:
     """Lightweight adapter for tool call responses."""
     return GenAIToolCallResponse(response=response, id=tool_call_id)
+
+
+def _start_tool_call_span(
+    tracer: Tracer, parent_span: Span, tool_call: GenAIToolCall, tool_type: str
+) -> Optional[Span]:
+    context = set_span_in_context(parent_span, get_current())
+    span_name = (
+        f"{GenAIAttributes.GenAiOperationNameValues.EXECUTE_TOOL.value} {tool_call.name}".strip()
+    )
+    span = tracer.start_span(
+        name=span_name, kind=SpanKind.CLIENT, context=context
+    )
+
+    if span.is_recording():
+        set_span_attribute(
+            span,
+            GenAIAttributes.GEN_AI_OPERATION_NAME,
+            GenAIAttributes.GenAiOperationNameValues.EXECUTE_TOOL.value,
+        )
+        set_span_attribute(
+            span,
+            GenAIAttributes.GEN_AI_SYSTEM,
+            GenAIAttributes.GenAiSystemValues.OPENAI.value,
+        )
+        set_span_attribute(
+            span, GenAIAttributes.GEN_AI_PROVIDER_NAME, tool_call.provider
+        )
+        set_span_attribute(span, GenAIAttributes.GEN_AI_TOOL_NAME, tool_call.name)
+        set_span_attribute(
+            span, GenAIAttributes.GEN_AI_TOOL_CALL_ID, tool_call.id
+        )
+        set_span_attribute(span, GenAIAttributes.GEN_AI_TOOL_TYPE, tool_type)
+
+    return span
+
+
+def _start_and_end_tool_call_span(
+    tracer: Tracer,
+    parent_span: Span,
+    tool_call: GenAIToolCall,
+    tool_type: str,
+) -> None:
+    span = _start_tool_call_span(tracer, parent_span, tool_call, tool_type)
+    if span:
+        span.end()
+
+
+def _tool_call_body(
+    tool_call: GenAIToolCall, tool_type: str, capture_content: bool
+) -> dict[str, Any]:
+    function: dict[str, Any] = {"name": tool_call.name}
+    if capture_content and tool_call.arguments is not None:
+        function["arguments"] = tool_call.arguments
+
+    body: dict[str, Any] = {
+        "type": tool_type,
+        "function": function,
+    }
+    if tool_call.id is not None:
+        body["id"] = tool_call.id
+    return body
 
 
 def _build_output_message_from_choice(
@@ -514,24 +647,57 @@ def _build_input_messages_from_kwargs(
 
 
 class ToolCallBuffer:
-    # TODO(toolcall-migrate): replace manual tool call buffering with genai-util types.
-    def __init__(self, index, tool_call_id, function_name):
+    def __init__(
+        self,
+        index: int,
+        tool_call: GenAIToolCall,
+        tool_type: str,
+        tracer: Tracer,
+        parent_span: Span,
+        capture_content: bool,
+    ):
         self.index = index
-        self.function_name = function_name
-        self.tool_call_id = tool_call_id
-        self.arguments = []
+        self.tool_call = tool_call
+        self.tool_type = tool_type
+        self._capture_content = capture_content
+        self._argument_chunks: list[str] = []
+        self.span = _start_tool_call_span(
+            tracer, parent_span, tool_call, tool_type
+        )
 
     def append_arguments(self, arguments):
-        self.arguments.append(arguments)
+        if not self._capture_content or arguments is None:
+            return
+        self._argument_chunks.append(arguments)
+
+    def finalize(self) -> tuple[GenAIToolCall, str]:
+        if self._capture_content and self._argument_chunks:
+            self.tool_call.arguments = "".join(self._argument_chunks)
+        else:
+            if not self._capture_content:
+                self.tool_call.arguments = None
+
+        if self.span:
+            self.span.end()
+
+        return self.tool_call, self.tool_type
 
 
 class ChoiceBuffer:
-    # TODO(toolcall-migrate): keep tool call state here only until we emit genai-util ToolCall spans.
-    def __init__(self, index):
+    def __init__(
+        self,
+        index: int,
+        tracer: Tracer,
+        parent_span: Span,
+        capture_content: bool,
+    ):
         self.index = index
         self.finish_reason = None
         self.text_content = []
         self.tool_calls_buffers = []
+        self._tracer = tracer
+        self._parent_span = parent_span
+        self._capture_content = capture_content
 
     def append_text_content(self, content):
         self.text_content.append(content)
@@ -543,12 +709,33 @@ class ChoiceBuffer:
             self.tool_calls_buffers.append(None)
 
         if not self.tool_calls_buffers[idx]:
-            self.tool_calls_buffers[idx] = ToolCallBuffer(
-                idx, tool_call.id, tool_call.function.name
+            genai_tool_call, tool_type = _normalize_tool_call(
+                tool_call, self._capture_content
             )
-        self.tool_calls_buffers[idx].append_arguments(
-            tool_call.function.arguments
-        )
+            self.tool_calls_buffers[idx] = ToolCallBuffer(
+                idx,
+                genai_tool_call,
+                tool_type,
+                self._tracer,
+                self._parent_span,
+                self._capture_content,
+            )
+
+        if not self._capture_content:
+            return
+
+        function = getattr(tool_call, "function", None)
+        if isinstance(tool_call, dict):
+            function = tool_call.get("function", function)
+
+        arguments = None
+        if function is not None:
+            if isinstance(function, dict):
+                arguments = function.get("arguments")
+            else:
+                arguments = getattr(function, "arguments", None)
+
+        self.tool_calls_buffers[idx].append_arguments(arguments)
 
 
 class StreamWrapper:
@@ -564,11 +751,13 @@ class StreamWrapper:
         self,
         stream: Stream,
         span: Span,
+        tracer: Tracer,
         logger: Logger,
         capture_content: bool,
     ):
         self.stream = stream
         self.span = span
+        self.tracer = tracer
         self.choice_buffers = []
         self._span_started = False
         self.capture_content = capture_content
@@ -626,19 +815,15 @@ class StreamWrapper:
                     message["content"] = "".join(choice.text_content)
                 if choice.tool_calls_buffers:
                     tool_calls = []
-                    # TODO(toolcall-migrate): build tool_call parts with genai-util ToolCall/ToolCallResponse helpers.
-                    for tool_call in choice.tool_calls_buffers:
-                        function = {"name": tool_call.function_name}
-                        if self.capture_content:
-                            function["arguments"] = "".join(
-                                tool_call.arguments
+                    for tool_call_state in choice.tool_calls_buffers:
+                        if tool_call_state is None:
+                            continue
+                        tool_call, tool_type = tool_call_state.finalize()
+                        tool_calls.append(
+                            _tool_call_body(
+                                tool_call, tool_type, self.capture_content
                             )
-                        tool_call_dict = {
-                            "id": tool_call.tool_call_id,
-                            "type": "function",
-                            "function": function,
-                        }
-                        tool_calls.append(tool_call_dict)
+                        )
                     message["tool_calls"] = tool_calls
 
                 body = {
@@ -755,7 +940,11 @@ class StreamWrapper:
 
             # make sure we have enough choice buffers
             for idx in range(len(self.choice_buffers), choice.index + 1):
-                self.choice_buffers.append(ChoiceBuffer(idx))
+                self.choice_buffers.append(
+                    ChoiceBuffer(
+                        idx, self.tracer, self.span, self.capture_content
+                    )
+                )
 
             if choice.finish_reason:
                 self.choice_buffers[
