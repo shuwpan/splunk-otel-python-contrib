@@ -28,6 +28,13 @@ from opentelemetry.semconv._incubating.attributes import (
 )
 from opentelemetry.trace import Span, SpanKind, Tracer
 from opentelemetry.trace.propagation import set_span_in_context
+from opentelemetry.util.genai.types import (
+    InputMessage,
+    OutputMessage,
+    Text,
+    ToolCall as GenAIToolCall,
+    ToolCallResponse as GenAIToolCallResponse,
+)
 
 from .instruments import Instruments
 from .utils import (
@@ -418,7 +425,96 @@ def _set_embeddings_response_attributes(
         # Don't set output tokens for embeddings as all tokens are input tokens
 
 
+def _to_genai_tool_call(tool_call: Any) -> GenAIToolCall:
+    """Lightweight adapter from OpenAI tool_call structures to genai-util ToolCall."""
+    function = getattr(tool_call, "function", None)
+    if isinstance(tool_call, dict):
+        function = tool_call.get("function", function)
+
+    function_name = None
+    arguments = None
+    if isinstance(function, dict):
+        function_name = function.get("name")
+        arguments = function.get("arguments")
+    else:
+        function_name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+
+    tool_call_id = getattr(tool_call, "id", None)
+    if isinstance(tool_call, dict):
+        tool_call_id = tool_call.get("id", tool_call_id)
+
+    return GenAIToolCall(
+        name=function_name or "",
+        id=tool_call_id,
+        arguments=arguments,
+        provider=GenAIAttributes.GenAiSystemValues.OPENAI.value,
+    )
+
+
+def _to_genai_tool_call_response(
+    tool_call_id: Optional[str], response: Any
+) -> GenAIToolCallResponse:
+    """Lightweight adapter for tool call responses."""
+    return GenAIToolCallResponse(response=response, id=tool_call_id)
+
+
+def _build_output_message_from_choice(
+    choice: Any, capture_content: bool
+) -> OutputMessage:
+    """Map a choice to an OutputMessage without altering existing behavior."""
+    message = getattr(choice, "message", None)
+    role = "assistant"
+    content = None
+    tool_calls = None
+
+    if message is not None:
+        if isinstance(message, dict):
+            role = message.get("role", role)
+            content = message.get("content")
+            tool_calls = message.get("tool_calls")
+        else:
+            role = getattr(message, "role", role)
+            content = getattr(message, "content", None)
+            tool_calls = getattr(message, "tool_calls", None)
+
+    parts = []
+
+    if capture_content and content:
+        parts.append(Text(content=content))
+
+    if tool_calls:
+        for tool_call in tool_calls:
+            parts.append(_to_genai_tool_call(tool_call))
+
+    finish_reason = getattr(choice, "finish_reason", None) or "error"
+    return OutputMessage(role=role, parts=parts, finish_reason=finish_reason)
+
+
+def _build_input_messages_from_kwargs(
+    kwargs: dict, capture_content: bool
+) -> list[InputMessage]:
+    """Normalize inbound messages into genai-util types; currently unused for behavior parity."""
+    normalized_messages: list[InputMessage] = []
+
+    for message in kwargs.get("messages", []):
+        role = getattr(message, "role", None)
+        content = getattr(message, "content", None)
+        if isinstance(message, dict):
+            role = message.get("role", role)
+            content = message.get("content", content)
+
+        parts = []
+        if capture_content and content is not None:
+            parts.append(Text(content=content))
+
+        normalized_messages.append(InputMessage(role=role, parts=parts))
+
+    return normalized_messages
+
+
 class ToolCallBuffer:
+    # TODO(toolcall-migrate): replace manual tool call buffering with genai-util types.
     def __init__(self, index, tool_call_id, function_name):
         self.index = index
         self.function_name = function_name
@@ -430,6 +526,7 @@ class ToolCallBuffer:
 
 
 class ChoiceBuffer:
+    # TODO(toolcall-migrate): keep tool call state here only until we emit genai-util ToolCall spans.
     def __init__(self, index):
         self.index = index
         self.finish_reason = None
@@ -529,6 +626,7 @@ class StreamWrapper:
                     message["content"] = "".join(choice.text_content)
                 if choice.tool_calls_buffers:
                     tool_calls = []
+                    # TODO(toolcall-migrate): build tool_call parts with genai-util ToolCall/ToolCallResponse helpers.
                     for tool_call in choice.tool_calls_buffers:
                         function = {"name": tool_call.function_name}
                         if self.capture_content:
@@ -670,6 +768,7 @@ class StreamWrapper:
                 )
 
             if choice.delta.tool_calls is not None:
+                # TODO(toolcall-migrate): normalize tool calls via genai-util types instead of buffer classes.
                 for tool_call in choice.delta.tool_calls:
                     self.choice_buffers[choice.index].append_tool_call(
                         tool_call
