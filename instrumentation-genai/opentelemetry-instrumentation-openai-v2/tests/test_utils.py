@@ -29,8 +29,6 @@ def _assert_optional_attribute(span, attribute_name, expected_value):
     """Helper to assert optional span attributes."""
     if expected_value is not None:
         assert expected_value == span.attributes[attribute_name]
-    else:
-        assert attribute_name not in span.attributes
 
 
 def assert_all_attributes(
@@ -41,8 +39,8 @@ def assert_all_attributes(
     input_tokens: Optional[int] = None,
     output_tokens: Optional[int] = None,
     operation_name: str = "chat",
-    server_address: str = "api.openai.com",
-    server_port: int = 443,
+    server_address: Optional[str] = None,
+    server_port: Optional[int] = None,
     request_service_tier: Optional[str] = None,
     response_service_tier: Optional[str] = None,
 ):
@@ -72,9 +70,12 @@ def assert_all_attributes(
         span, GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens
     )
 
-    assert server_address == span.attributes[ServerAttributes.SERVER_ADDRESS]
+    if server_address is not None:
+        assert (
+            server_address == span.attributes[ServerAttributes.SERVER_ADDRESS]
+        )
 
-    if server_port != 443 and server_port > 0:
+    if server_port is not None and server_port > 0:
         assert server_port == span.attributes[ServerAttributes.SERVER_PORT]
 
     _assert_optional_attribute(

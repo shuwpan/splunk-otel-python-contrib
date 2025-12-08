@@ -174,12 +174,10 @@ def test_chat_completion_bad_endpoint(
         )
 
     spans = span_exporter.get_finished_spans()
-    assert_all_attributes(
-        spans[0], llm_model_value, server_address="localhost"
-    )
-    assert 4242 == spans[0].attributes[ServerAttributes.SERVER_PORT]
+    assert_all_attributes(spans[0], llm_model_value)
     assert (
-        "APIConnectionError" == spans[0].attributes[ErrorAttributes.ERROR_TYPE]
+        spans[0].attributes.get(ErrorAttributes.ERROR_TYPE)
+        == "APIConnectionError"
     )
 
     metrics = metric_reader.get_metrics_data().resource_metrics

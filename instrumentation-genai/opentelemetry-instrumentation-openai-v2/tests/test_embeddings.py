@@ -224,6 +224,7 @@ def test_embeddings_bad_endpoint(
         model_name,
         operation_name="embeddings",
         server_address="localhost",
+        server_port=4242,
     )
     assert 4242 == spans[0].attributes[ServerAttributes.SERVER_PORT]
     assert (

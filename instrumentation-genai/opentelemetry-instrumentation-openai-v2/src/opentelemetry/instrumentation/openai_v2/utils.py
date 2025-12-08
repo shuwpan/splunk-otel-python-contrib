@@ -273,4 +273,3 @@ def handle_span_exception(span, error):
         span.set_attribute(
             ErrorAttributes.ERROR_TYPE, type(error).__qualname__
         )
-    span.end()
