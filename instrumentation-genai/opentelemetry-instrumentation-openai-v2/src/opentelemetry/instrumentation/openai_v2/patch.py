@@ -35,6 +35,7 @@ from opentelemetry.util.genai.handler import (
     get_telemetry_handler,
 )
 from opentelemetry.util.genai.types import (
+    EmbeddingInvocation,
     InputMessage,
     LLMInvocation,
     OutputMessage,
@@ -230,6 +231,61 @@ def _apply_chat_response_to_invocation(
     invocation.output_messages = _build_output_messages_from_response(
         result, capture_content
     )
+
+
+def _normalize_input_texts(input_value: Any) -> list[str]:
+    if input_value is None:
+        return []
+    if isinstance(input_value, str):
+        return [input_value]
+    if isinstance(input_value, Iterable):
+        texts: list[str] = []
+        for item in input_value:
+            try:
+                texts.append(str(item))
+            except Exception:  # pragma: no cover - defensive
+                continue
+        return texts
+    try:
+        return [str(input_value)]
+    except Exception:  # pragma: no cover - defensive
+        return []
+
+
+def _build_embedding_invocation(
+    kwargs: dict[str, Any], attributes: Optional[dict[str, Any]] = None
+) -> EmbeddingInvocation:
+    invocation = EmbeddingInvocation(
+        request_model=kwargs.get("model", "") or "",
+        input_texts=_normalize_input_texts(kwargs.get("input")),
+    )
+
+    if "dimensions" in kwargs and value_is_set(kwargs.get("dimensions")):
+        invocation.dimension_count = kwargs.get("dimensions")
+
+    encoding_format = kwargs.get("encoding_format")
+    if value_is_set(encoding_format):
+        invocation.encoding_formats = [encoding_format]
+
+    if attributes:
+        if ServerAttributes.SERVER_ADDRESS in attributes:
+            invocation.server_address = attributes[ServerAttributes.SERVER_ADDRESS]
+        if ServerAttributes.SERVER_PORT in attributes:
+            invocation.server_port = attributes[ServerAttributes.SERVER_PORT]
+
+    return invocation
+
+
+def _apply_embedding_response_to_invocation(
+    invocation: EmbeddingInvocation, result: Any
+) -> None:
+    if getattr(result, "usage", None):
+        invocation.input_tokens = result.usage.prompt_tokens
+
+    if getattr(result, "data", None):
+        first_embedding = result.data[0] if len(result.data) > 0 else None
+        if getattr(first_embedding, "embedding", None):
+            invocation.dimension_count = len(first_embedding.embedding)
 
 
 def chat_completions_create(
@@ -607,7 +663,7 @@ def _set_response_attributes(
             result.usage.completion_tokens,
         )
 
-    _emit_tool_calls_in_response(handler, span, result, capture_content)
+    _emit_tool_call_spans_from_response(handler, span, result, capture_content)
 
 
 def _set_embeddings_response_attributes(
@@ -640,7 +696,7 @@ def _set_embeddings_response_attributes(
         # Don't set output tokens for embeddings as all tokens are input tokens
 
 
-def _emit_tool_calls_in_response(
+def _emit_tool_call_spans_from_response(
     handler,
     parent_span: Span,
     result: Any,
@@ -659,7 +715,7 @@ def _emit_tool_calls_in_response(
             continue
 
         for tool_call in tool_calls:
-            genai_tool_call, _ = _normalize_tool_call(
+            genai_tool_call, _ = _build_tool_call_invocation(
                 tool_call, capture_content
             )
             genai_tool_call.parent_span = parent_span
@@ -667,7 +723,7 @@ def _emit_tool_calls_in_response(
             handler.stop_tool_call(genai_tool_call)
 
 
-def _normalize_tool_call(
+def _build_tool_call_invocation(
     tool_call: Any, capture_content: bool
 ) -> tuple[GenAIToolCall, str]:
     """Normalize to genai-util ToolCall and capture tool type."""
@@ -722,33 +778,6 @@ def _normalize_tool_call(
     return genai_tool_call, tool_call_type
 
 
-def _to_genai_tool_call(tool_call: Any) -> GenAIToolCall:
-    """Lightweight adapter from OpenAI tool_call structures to genai-util ToolCall."""
-    function = getattr(tool_call, "function", None)
-    if isinstance(tool_call, dict):
-        function = tool_call.get("function", function)
-
-    function_name = None
-    arguments = None
-    if isinstance(function, dict):
-        function_name = function.get("name")
-        arguments = function.get("arguments")
-    else:
-        function_name = getattr(function, "name", None)
-        arguments = getattr(function, "arguments", None)
-
-    tool_call_id = getattr(tool_call, "id", None)
-    if isinstance(tool_call, dict):
-        tool_call_id = tool_call.get("id", tool_call_id)
-
-    return GenAIToolCall(
-        name=function_name or "",
-        id=tool_call_id,
-        arguments=arguments,
-        provider=GenAIAttributes.GenAiSystemValues.OPENAI.value,
-    )
-
-
 def _tool_call_body(
     tool_call: GenAIToolCall, tool_type: str, capture_content: bool
 ) -> dict[str, Any]:
@@ -763,60 +792,6 @@ def _tool_call_body(
     if tool_call.id is not None:
         body["id"] = tool_call.id
     return body
-
-
-def _build_output_message_from_choice(
-    choice: Any, capture_content: bool
-) -> OutputMessage:
-    """Map a choice to an OutputMessage without altering existing behavior."""
-    message = getattr(choice, "message", None)
-    role = "assistant"
-    content = None
-    tool_calls = None
-
-    if message is not None:
-        if isinstance(message, dict):
-            role = message.get("role", role)
-            content = message.get("content")
-            tool_calls = message.get("tool_calls")
-        else:
-            role = getattr(message, "role", role)
-            content = getattr(message, "content", None)
-            tool_calls = getattr(message, "tool_calls", None)
-
-    parts = []
-
-    if capture_content and content:
-        parts.append(Text(content=content))
-
-    if tool_calls:
-        for tool_call in tool_calls:
-            parts.append(_to_genai_tool_call(tool_call))
-
-    finish_reason = getattr(choice, "finish_reason", None) or "error"
-    return OutputMessage(role=role, parts=parts, finish_reason=finish_reason)
-
-
-def _build_input_messages_from_kwargs(
-    kwargs: dict, capture_content: bool
-) -> list[InputMessage]:
-    """Normalize inbound messages into genai-util types; currently unused for behavior parity."""
-    normalized_messages: list[InputMessage] = []
-
-    for message in kwargs.get("messages", []):
-        role = getattr(message, "role", None)
-        content = getattr(message, "content", None)
-        if isinstance(message, dict):
-            role = message.get("role", role)
-            content = message.get("content", content)
-
-        parts = []
-        if capture_content and content is not None:
-            parts.append(Text(content=content))
-
-        normalized_messages.append(InputMessage(role=role, parts=parts))
-
-    return normalized_messages
 
 
 class ToolCallBuffer:
@@ -886,7 +861,7 @@ class ChoiceBuffer:
             self.tool_calls_buffers.append(None)
 
         if not self.tool_calls_buffers[idx]:
-            genai_tool_call, tool_type = _normalize_tool_call(
+            genai_tool_call, tool_type = _build_tool_call_invocation(
                 tool_call, self._capture_content
             )
             self.tool_calls_buffers[idx] = ToolCallBuffer(
