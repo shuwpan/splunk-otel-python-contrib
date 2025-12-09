@@ -449,44 +449,47 @@ def embeddings_create(
             instance,
             GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
         )
-        span_name = _get_embeddings_span_name(span_attributes)
-        input_text = kwargs.get("input", "")
+        invocation = _build_embedding_invocation(kwargs, span_attributes)
+        handler = get_telemetry_handler()
+        handler.start_embedding(invocation)
+        span = getattr(invocation, "span", None)
 
-        with tracer.start_as_current_span(
-            name=span_name,
-            kind=SpanKind.CLIENT,
-            attributes=span_attributes,
-            end_on_exit=True,
-        ) as span:
-            start = default_timer()
-            result = None
-            error_type = None
+        start = default_timer()
+        result = None
+        error_type = None
 
-            try:
-                result = wrapped(*args, **kwargs)
+        try:
+            result = wrapped(*args, **kwargs)
 
-                if span.is_recording():
-                    _set_embeddings_response_attributes(
-                        span, result, capture_content, input_text
-                    )
-
-                return result
-
-            except Exception as error:
-                error_type = type(error).__qualname__
-                handle_span_exception(span, error)
-                raise
-
-            finally:
-                duration = max((default_timer() - start), 0)
-                _record_metrics(
-                    instruments,
-                    duration,
-                    result,
-                    span_attributes,
-                    error_type,
-                    GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            if span and span.is_recording():
+                _set_embeddings_response_attributes(
+                    span, result, capture_content, kwargs.get("input", "")
                 )
+
+            _apply_embedding_response_to_invocation(invocation, result)
+            handler.stop_embedding(invocation)
+            return result
+
+        except Exception as error:
+            error_type = type(error).__qualname__
+            handler.fail_embedding(
+                invocation,
+                InvocationError(message=str(error), type=type(error)),
+            )
+            if span:
+                handle_span_exception(span, error)
+            raise
+
+        finally:
+            duration = max((default_timer() - start), 0)
+            _record_metrics(
+                instruments,
+                duration,
+                result,
+                span_attributes,
+                error_type,
+                GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            )
 
     return traced_method
 
@@ -504,44 +507,47 @@ def async_embeddings_create(
             instance,
             GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
         )
-        span_name = _get_embeddings_span_name(span_attributes)
-        input_text = kwargs.get("input", "")
+        invocation = _build_embedding_invocation(kwargs, span_attributes)
+        handler = get_telemetry_handler()
+        handler.start_embedding(invocation)
+        span = getattr(invocation, "span", None)
 
-        with tracer.start_as_current_span(
-            name=span_name,
-            kind=SpanKind.CLIENT,
-            attributes=span_attributes,
-            end_on_exit=True,
-        ) as span:
-            start = default_timer()
-            result = None
-            error_type = None
+        start = default_timer()
+        result = None
+        error_type = None
 
-            try:
-                result = await wrapped(*args, **kwargs)
+        try:
+            result = await wrapped(*args, **kwargs)
 
-                if span.is_recording():
-                    _set_embeddings_response_attributes(
-                        span, result, capture_content, input_text
-                    )
-
-                return result
-
-            except Exception as error:
-                error_type = type(error).__qualname__
-                handle_span_exception(span, error)
-                raise
-
-            finally:
-                duration = max((default_timer() - start), 0)
-                _record_metrics(
-                    instruments,
-                    duration,
-                    result,
-                    span_attributes,
-                    error_type,
-                    GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            if span and span.is_recording():
+                _set_embeddings_response_attributes(
+                    span, result, capture_content, kwargs.get("input", "")
                 )
+
+            _apply_embedding_response_to_invocation(invocation, result)
+            handler.stop_embedding(invocation)
+            return result
+
+        except Exception as error:
+            error_type = type(error).__qualname__
+            handler.fail_embedding(
+                invocation,
+                InvocationError(message=str(error), type=type(error)),
+            )
+            if span:
+                handle_span_exception(span, error)
+            raise
+
+        finally:
+            duration = max((default_timer() - start), 0)
+            _record_metrics(
+                instruments,
+                duration,
+                result,
+                span_attributes,
+                error_type,
+                GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            )
 
     return traced_method
 
