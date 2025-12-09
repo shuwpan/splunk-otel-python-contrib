@@ -258,6 +258,9 @@ def _build_embedding_invocation(
     invocation = EmbeddingInvocation(
         request_model=kwargs.get("model", "") or "",
         input_texts=_normalize_input_texts(kwargs.get("input")),
+        provider="openai",
+        framework="openai-sdk",
+        system=GenAIAttributes.GenAiSystemValues.OPENAI.value,
     )
 
     if "dimensions" in kwargs and value_is_set(kwargs.get("dimensions")):
