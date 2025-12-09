@@ -282,10 +282,20 @@ def _apply_embedding_response_to_invocation(
     if getattr(result, "usage", None):
         invocation.input_tokens = result.usage.prompt_tokens
 
-    if getattr(result, "data", None):
-        first_embedding = result.data[0] if len(result.data) > 0 else None
-        if getattr(first_embedding, "embedding", None):
-            invocation.dimension_count = len(first_embedding.embedding)
+    data = getattr(result, "data", None)
+    if not data:
+        return
+
+    first_embedding = data[0] if len(data) > 0 else None
+    if first_embedding is None:
+        return
+
+    embedding_vec = getattr(first_embedding, "embedding", None)
+    if embedding_vec is not None:
+        try:
+            invocation.dimension_count = len(embedding_vec)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
 
 def chat_completions_create(
