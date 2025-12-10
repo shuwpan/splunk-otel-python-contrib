@@ -158,6 +158,68 @@ def test_chat_completion_no_content(
     assert_message_in_logs(logs[1], "gen_ai.choice", choice_event, spans[0])
 
 
+@pytest.mark.vcr()
+def test_chat_completion_emits_content_event(
+    span_exporter,
+    log_exporter,
+    openai_client,
+    instrument_with_content_events,
+):
+    llm_model_value = "gpt-4o-mini"
+    messages_value = [{"role": "user", "content": "Say this is a test"}]
+
+    response = openai_client.chat.completions.create(
+        messages=messages_value,
+        model=llm_model_value,
+        stream=False,
+    )
+
+    spans = span_exporter.get_finished_spans()
+    assert_all_attributes(
+        spans[0],
+        llm_model_value,
+        response.id,
+        response.model,
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+    )
+
+    logs = log_exporter.get_finished_logs()
+    # user + choice + content event
+    assert len(logs) == 3
+
+    content_logs = [
+        log
+        for log in logs
+        if log.log_record.event_name
+        == "gen_ai.client.inference.operation.details"
+    ]
+    assert len(content_logs) == 1
+    content_log = content_logs[0].log_record
+
+    assert (
+        content_log.attributes[GenAIAttributes.GEN_AI_REQUEST_MODEL]
+        == llm_model_value
+    )
+    assert (
+        content_log.attributes.get(GenAIAttributes.GEN_AI_RESPONSE_MODEL)
+        == response.model
+    )
+
+    body = dict(content_log.body)
+    input_messages = body["gen_ai.input.messages"]
+    assert input_messages[0]["role"] == "user"
+    assert input_messages[0]["parts"][0]["content"] == "Say this is a test"
+
+    output_messages = body["gen_ai.output.messages"]
+    assert output_messages[0]["role"] == "assistant"
+    assert output_messages[0]["finish_reason"] == "stop"
+    assert output_messages[0]["parts"][0]["content"] == "This is a test."
+
+    # Ensure log is linked to the span
+    assert_log_parent(content_logs[0], spans[0])
+
+
 def test_chat_completion_bad_endpoint(
     span_exporter, metric_reader, instrument_no_content
 ):

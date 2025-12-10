@@ -41,6 +41,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 from opentelemetry.util.genai import handler as genai_handler
+from opentelemetry.util.genai.environment_variables import (
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS,
+)
 
 
 @pytest.fixture(scope="function", name="span_exporter")
@@ -197,6 +200,39 @@ def instrument_with_content_unsampled(
 
     yield instrumentor
     os.environ.pop(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, None)
+    instrumentor.uninstrument()
+
+
+@pytest.fixture(scope="function")
+def instrument_with_content_events(
+    tracer_provider, logger_provider, meter_provider
+):
+    os.environ.update(
+        {
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "True",
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS: "span_metric_event",
+        }
+    )
+
+    # Ensure genai-util handler is rebuilt with test providers and env
+    if hasattr(genai_handler.get_telemetry_handler, "_default_handler"):
+        delattr(genai_handler.get_telemetry_handler, "_default_handler")
+    genai_handler.get_telemetry_handler(
+        tracer_provider=tracer_provider,
+        meter_provider=meter_provider,
+        logger_provider=logger_provider,
+    )
+
+    instrumentor = OpenAIInstrumentor()
+    instrumentor.instrument(
+        tracer_provider=tracer_provider,
+        logger_provider=logger_provider,
+        meter_provider=meter_provider,
+    )
+
+    yield instrumentor
+    os.environ.pop(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(OTEL_INSTRUMENTATION_GENAI_EMITTERS, None)
     instrumentor.uninstrument()
 
 
