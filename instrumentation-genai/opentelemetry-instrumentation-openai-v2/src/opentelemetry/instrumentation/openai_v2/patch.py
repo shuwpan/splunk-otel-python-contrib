@@ -28,7 +28,7 @@ from opentelemetry.semconv._incubating.attributes import (
 from opentelemetry.semconv._incubating.attributes import (
     server_attributes as ServerAttributes,
 )
-from opentelemetry.trace import Span, SpanKind, Tracer
+from opentelemetry.trace import Span
 from opentelemetry.trace.propagation import set_span_in_context
 from opentelemetry.util.genai.handler import (
     Error as InvocationError,
@@ -302,10 +302,10 @@ def _apply_embedding_response_to_invocation(
 
 
 def chat_completions_create(
-    tracer: Tracer,
     logger: Logger,
     instruments: Instruments,
     capture_content: bool,
+    handler,
 ):
     """Wrap the `create` method of the `ChatCompletion` class to trace it."""
 
@@ -313,7 +313,6 @@ def chat_completions_create(
         capture_content_flag = capture_content
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
         invocation = _build_chat_invocation(kwargs, capture_content_flag)
-        handler = get_telemetry_handler()
         handler.start_llm(invocation)
         span = getattr(invocation, "span", None)
 
@@ -371,10 +370,10 @@ def chat_completions_create(
 
 
 def async_chat_completions_create(
-    tracer: Tracer,
     logger: Logger,
     instruments: Instruments,
     capture_content: bool,
+    handler,
 ):
     """Wrap the `create` method of the `AsyncChatCompletion` class to trace it."""
 
@@ -382,7 +381,6 @@ def async_chat_completions_create(
         capture_content_flag = capture_content
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
         invocation = _build_chat_invocation(kwargs, capture_content_flag)
-        handler = get_telemetry_handler()
         handler.start_llm(invocation)
         span = getattr(invocation, "span", None)
 
@@ -440,9 +438,9 @@ def async_chat_completions_create(
 
 
 def embeddings_create(
-    tracer: Tracer,
     instruments: Instruments,
     capture_content: bool,
+    handler,
 ):
     """Wrap the `create` method of the `Embeddings` class to trace it."""
 
@@ -453,7 +451,6 @@ def embeddings_create(
             GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
         )
         invocation = _build_embedding_invocation(kwargs, span_attributes)
-        handler = get_telemetry_handler()
         handler.start_embedding(invocation)
         span = getattr(invocation, "span", None)
 
@@ -498,9 +495,9 @@ def embeddings_create(
 
 
 def async_embeddings_create(
-    tracer: Tracer,
     instruments: Instruments,
     capture_content: bool,
+    handler,
 ):
     """Wrap the `create` method of the `AsyncEmbeddings` class to trace it."""
 
@@ -511,7 +508,6 @@ def async_embeddings_create(
             GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
         )
         invocation = _build_embedding_invocation(kwargs, span_attributes)
-        handler = get_telemetry_handler()
         handler.start_embedding(invocation)
         span = getattr(invocation, "span", None)
 
