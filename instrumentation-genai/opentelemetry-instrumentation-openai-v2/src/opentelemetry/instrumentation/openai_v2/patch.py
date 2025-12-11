@@ -233,6 +233,13 @@ def _apply_chat_response_to_invocation(
     )
 
 
+def _parse_response(result: Any) -> Any:
+    """Unwrap LegacyAPIResponse objects returned by with_raw_response helpers."""
+    if hasattr(result, "parse"):
+        return result.parse()
+    return result
+
+
 def _normalize_input_texts(input_value: Any) -> list[str]:
     if input_value is None:
         return []
@@ -321,12 +328,14 @@ def chat_completions_create(
 
         start = default_timer()
         result = None
+        parsed_result = None
         error_type = None
         try:
             result = wrapped(*args, **kwargs)
+            parsed_result = _parse_response(result)
             if is_streaming(kwargs):
                 return StreamWrapper(
-                    result,
+                    parsed_result,
                     invocation,
                     logger,
                     capture_content_flag,
@@ -335,13 +344,17 @@ def chat_completions_create(
 
             if span and span.is_recording():
                 _set_response_attributes(
-                    span, result, logger, capture_content_flag, handler
+                    span,
+                    parsed_result,
+                    logger,
+                    capture_content_flag,
+                    handler,
                 )
-            for choice in getattr(result, "choices", []):
+            for choice in getattr(parsed_result, "choices", []):
                 logger.emit(choice_to_event(choice, capture_content_flag))
 
             _apply_chat_response_to_invocation(
-                invocation, result, capture_content_flag
+                invocation, parsed_result, capture_content_flag
             )
             handler.stop_llm(invocation)
             return result
@@ -360,7 +373,7 @@ def chat_completions_create(
             _record_metrics(
                 instruments,
                 duration,
-                result,
+                parsed_result or result,
                 span_attributes,
                 error_type,
                 GenAIAttributes.GenAiOperationNameValues.CHAT.value,
@@ -389,12 +402,14 @@ def async_chat_completions_create(
 
         start = default_timer()
         result = None
+        parsed_result = None
         error_type = None
         try:
             result = await wrapped(*args, **kwargs)
+            parsed_result = _parse_response(result)
             if is_streaming(kwargs):
                 return StreamWrapper(
-                    result,
+                    parsed_result,
                     invocation,
                     logger,
                     capture_content_flag,
@@ -403,13 +418,17 @@ def async_chat_completions_create(
 
             if span and span.is_recording():
                 _set_response_attributes(
-                    span, result, logger, capture_content_flag, handler
+                    span,
+                    parsed_result,
+                    logger,
+                    capture_content_flag,
+                    handler,
                 )
-            for choice in getattr(result, "choices", []):
+            for choice in getattr(parsed_result, "choices", []):
                 logger.emit(choice_to_event(choice, capture_content_flag))
 
             _apply_chat_response_to_invocation(
-                invocation, result, capture_content_flag
+                invocation, parsed_result, capture_content_flag
             )
             handler.stop_llm(invocation)
             return result
@@ -428,7 +447,7 @@ def async_chat_completions_create(
             _record_metrics(
                 instruments,
                 duration,
-                result,
+                parsed_result or result,
                 span_attributes,
                 error_type,
                 GenAIAttributes.GenAiOperationNameValues.CHAT.value,
@@ -456,17 +475,24 @@ def embeddings_create(
 
         start = default_timer()
         result = None
+        parsed_result = None
         error_type = None
 
         try:
             result = wrapped(*args, **kwargs)
+            parsed_result = _parse_response(result)
 
             if span and span.is_recording():
                 _set_embeddings_response_attributes(
-                    span, result, capture_content, kwargs.get("input", "")
+                    span,
+                    parsed_result,
+                    capture_content,
+                    kwargs.get("input", ""),
                 )
 
-            _apply_embedding_response_to_invocation(invocation, result)
+            _apply_embedding_response_to_invocation(
+                invocation, parsed_result
+            )
             handler.stop_embedding(invocation)
             return result
 
@@ -485,7 +511,7 @@ def embeddings_create(
             _record_metrics(
                 instruments,
                 duration,
-                result,
+                parsed_result or result,
                 span_attributes,
                 error_type,
                 GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
@@ -513,17 +539,24 @@ def async_embeddings_create(
 
         start = default_timer()
         result = None
+        parsed_result = None
         error_type = None
 
         try:
             result = await wrapped(*args, **kwargs)
+            parsed_result = _parse_response(result)
 
             if span and span.is_recording():
                 _set_embeddings_response_attributes(
-                    span, result, capture_content, kwargs.get("input", "")
+                    span,
+                    parsed_result,
+                    capture_content,
+                    kwargs.get("input", ""),
                 )
 
-            _apply_embedding_response_to_invocation(invocation, result)
+            _apply_embedding_response_to_invocation(
+                invocation, parsed_result
+            )
             handler.stop_embedding(invocation)
             return result
 
@@ -542,7 +575,7 @@ def async_embeddings_create(
             _record_metrics(
                 instruments,
                 duration,
-                result,
+                parsed_result or result,
                 span_attributes,
                 error_type,
                 GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value,
