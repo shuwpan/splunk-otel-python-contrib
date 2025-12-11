@@ -673,9 +673,10 @@ def _set_response_attributes(
     capture_content: bool,
     handler,
 ):
-    set_span_attribute(
-        span, GenAIAttributes.GEN_AI_RESPONSE_MODEL, result.model
-    )
+    if getattr(result, "model", None):
+        set_span_attribute(
+            span, GenAIAttributes.GEN_AI_RESPONSE_MODEL, result.model
+        )
 
     if getattr(result, "choices", None):
         finish_reasons = []

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add genai-util ToolCall/ToolCallResponse normalization and emit `execute_tool`
   child spans for OpenAI tool calls (sync and streaming); update tool-call tests
   accordingly.
+- Fix `AttributeError` when handling `LegacyAPIResponse` (from `with_raw_response`)
+  ([#4002](https://github.com/open-telemetry/opentelemetry-python-contrib/issues/4002))
 
 ## Version 2.2b0 (2025-11-25)
 
