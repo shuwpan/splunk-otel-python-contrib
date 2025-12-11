@@ -910,7 +910,6 @@ class StreamWrapper:
     response_id: Optional[str] = None
     response_model: Optional[str] = None
     service_tier: Optional[str] = None
-    finish_reasons: list = []
     prompt_tokens: Optional[int] = 0
     completion_tokens: Optional[int] = 0
 
@@ -927,6 +926,7 @@ class StreamWrapper:
         self.span = getattr(invocation, "span", None)
         self.handler = handler
         self.choice_buffers = []
+        self.finish_reasons = []  # Instance-level to avoid cross-request contamination
         self._span_started = False
         self.capture_content = capture_content
         self._telemetry_stopped = False
