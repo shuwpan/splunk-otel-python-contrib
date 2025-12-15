@@ -224,6 +224,20 @@ def get_llm_request_attributes(
             }
         )
 
+        if (choice_count := kwargs.get("n")) is not None:
+            # Only add non default, meaningful values
+            if isinstance(choice_count, int) and choice_count != 1:
+                attributes[GenAIAttributes.GEN_AI_REQUEST_CHOICE_COUNT] = (
+                    choice_count
+                )
+
+        if (stop_sequences := kwargs.get("stop")) is not None:
+            if isinstance(stop_sequences, str):
+                stop_sequences = [stop_sequences]
+            attributes[GenAIAttributes.GEN_AI_REQUEST_STOP_SEQUENCES] = (
+                stop_sequences
+            )
+
         if (response_format := kwargs.get("response_format")) is not None:
             # response_format may be string or object with a string in the `type` key
             if isinstance(response_format, Mapping):
@@ -276,3 +290,4 @@ def handle_span_exception(span, error):
         span.set_attribute(
             ErrorAttributes.ERROR_TYPE, type(error).__qualname__
         )
+    span.end()
