@@ -132,8 +132,4 @@ interactions:
     status:
       code: 200
       message: OK
-<<<<<<< HEAD
 version: 1
-=======
-version: 1
->>>>>>> 46a0d1dd (openai-v2: handle LegacyAPIResponse (#4017))
