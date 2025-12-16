@@ -32,7 +32,6 @@ from opentelemetry.trace import Span
 from opentelemetry.trace.propagation import set_span_in_context
 from opentelemetry.util.genai.handler import (
     Error as InvocationError,
-    get_telemetry_handler,
 )
 from opentelemetry.util.genai.types import (
     EmbeddingInvocation,
@@ -582,11 +581,6 @@ def async_embeddings_create(
             )
 
     return traced_method
-
-
-def _get_embeddings_span_name(span_attributes):
-    """Get span name for embeddings operations."""
-    return f"{span_attributes[GenAIAttributes.GEN_AI_OPERATION_NAME]} {span_attributes[GenAIAttributes.GEN_AI_REQUEST_MODEL]}"
 
 
 def _record_metrics(
