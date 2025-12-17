@@ -198,13 +198,6 @@ def test_embeddings_with_not_given_values(
     assert "gen_ai.request.dimensions" not in spans[0].attributes
 
 
-@pytest.mark.skip(
-    reason=(
-        "TODO: enable when genai-util ends embedding spans on errors; "
-        "current fail path does not export a span"
-    )
-)
-@pytest.mark.vcr()
 def test_embeddings_bad_endpoint(
     span_exporter, metric_reader, instrument_no_content
 ):
@@ -254,12 +247,6 @@ def test_embeddings_bad_endpoint(
     )
 
 
-@pytest.mark.skip(
-    reason=(
-        "TODO: enable when genai-util ends embedding spans on errors; "
-        "current fail path does not export a span"
-    )
-)
 @pytest.mark.vcr()
 def test_embeddings_model_not_found(
     span_exporter, metric_reader, openai_client, instrument_no_content

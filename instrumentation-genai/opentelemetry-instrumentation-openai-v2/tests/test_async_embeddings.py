@@ -110,12 +110,6 @@ async def test_async_embeddings_with_batch_input(
     assert len(response.data) == len(input_texts)
 
 
-@pytest.mark.skip(
-    reason=(
-        "TODO: enable when genai-util ends embedding spans on errors; "
-        "current fail path does not export a span"
-    )
-)
 @pytest.mark.asyncio
 @pytest.mark.vcr()
 async def test_async_embeddings_error_handling(

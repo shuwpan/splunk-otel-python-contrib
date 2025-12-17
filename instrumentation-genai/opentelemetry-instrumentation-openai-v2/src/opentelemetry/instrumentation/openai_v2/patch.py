@@ -129,6 +129,7 @@ def _build_input_messages(
 def _build_chat_invocation(
     kwargs: dict[str, Any],
     capture_content: bool,
+    attributes: Optional[dict[str, Any]] = None,
 ) -> LLMInvocation:
     def _clean(value: Any) -> Any:
         return value if value_is_set(value) else None
@@ -173,6 +174,14 @@ def _build_chat_invocation(
         invocation.attributes[
             GenAIAttributes.GEN_AI_OPENAI_REQUEST_SEED
         ] = seed
+
+    if attributes:
+        if ServerAttributes.SERVER_ADDRESS in attributes:
+            invocation.server_address = attributes[
+                ServerAttributes.SERVER_ADDRESS
+            ]
+        if ServerAttributes.SERVER_PORT in attributes:
+            invocation.server_port = attributes[ServerAttributes.SERVER_PORT]
 
     service_tier = kwargs.get("service_tier")
     extra_body = kwargs.get("extra_body")
@@ -318,7 +327,9 @@ def chat_completions_create(
     def traced_method(wrapped, instance, args, kwargs):
         capture_content_flag = capture_content
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
-        invocation = _build_chat_invocation(kwargs, capture_content_flag)
+        invocation = _build_chat_invocation(
+            kwargs, capture_content_flag, span_attributes
+        )
         handler.start_llm(invocation)
         span = getattr(invocation, "span", None)
 
@@ -392,7 +403,9 @@ def async_chat_completions_create(
     async def traced_method(wrapped, instance, args, kwargs):
         capture_content_flag = capture_content
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
-        invocation = _build_chat_invocation(kwargs, capture_content_flag)
+        invocation = _build_chat_invocation(
+            kwargs, capture_content_flag, span_attributes
+        )
         handler.start_llm(invocation)
         span = getattr(invocation, "span", None)
 
