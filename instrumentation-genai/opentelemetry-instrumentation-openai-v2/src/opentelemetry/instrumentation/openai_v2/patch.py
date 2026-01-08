@@ -20,8 +20,8 @@ from typing import Any, Iterable, Optional
 
 from openai import Stream
 
-from opentelemetry._logs import Logger, LogRecord
 from opentelemetry import context as context_api
+from opentelemetry._logs import Logger, LogRecord
 from opentelemetry.context import get_current
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
@@ -29,7 +29,7 @@ from opentelemetry.semconv._incubating.attributes import (
 from opentelemetry.semconv._incubating.attributes import (
     server_attributes as ServerAttributes,
 )
-from opentelemetry.trace import Span, SpanKind, Tracer
+from opentelemetry.trace import Span
 from opentelemetry.trace.propagation import set_span_in_context
 from opentelemetry.util.genai.handler import (
     Error as InvocationError,
@@ -40,6 +40,8 @@ from opentelemetry.util.genai.types import (
     LLMInvocation,
     OutputMessage,
     Text,
+)
+from opentelemetry.util.genai.types import (
     ToolCall as GenAIToolCall,
 )
 
@@ -298,9 +300,9 @@ def _build_tool_call_invocation(
             tool_call_id
         )
     if description:
-        genai_tool_call.attributes[
-            GenAIAttributes.GEN_AI_TOOL_DESCRIPTION
-        ] = description
+        genai_tool_call.attributes[GenAIAttributes.GEN_AI_TOOL_DESCRIPTION] = (
+            description
+        )
 
     return genai_tool_call, tool_call_type
 
@@ -352,7 +354,9 @@ def _build_embedding_invocation(
 
     if attributes:
         if ServerAttributes.SERVER_ADDRESS in attributes:
-            invocation.server_address = attributes[ServerAttributes.SERVER_ADDRESS]
+            invocation.server_address = attributes[
+                ServerAttributes.SERVER_ADDRESS
+            ]
         if ServerAttributes.SERVER_PORT in attributes:
             invocation.server_port = attributes[ServerAttributes.SERVER_PORT]
 
@@ -569,9 +573,7 @@ def embeddings_create(
                     kwargs.get("input", ""),
                 )
 
-            _apply_embedding_response_to_invocation(
-                invocation, parsed_result
-            )
+            _apply_embedding_response_to_invocation(invocation, parsed_result)
             handler.stop_embedding(invocation)
             return result
 
@@ -637,9 +639,7 @@ def async_embeddings_create(
                     kwargs.get("input", ""),
                 )
 
-            _apply_embedding_response_to_invocation(
-                invocation, parsed_result
-            )
+            _apply_embedding_response_to_invocation(invocation, parsed_result)
             handler.stop_embedding(invocation)
             return result
 
@@ -792,7 +792,9 @@ def _set_response_attributes(
         )
 
     if handler:
-        _emit_tool_call_spans_from_response(handler, span, result, capture_content)
+        _emit_tool_call_spans_from_response(
+            handler, span, result, capture_content
+        )
 
 
 def _emit_tool_call_spans_from_response(
@@ -936,7 +938,6 @@ class ChoiceBuffer:
             )
 
 
-
 class StreamWrapper:
     span: Span
     response_id: Optional[str] = None
@@ -985,7 +986,9 @@ class StreamWrapper:
                     if tool_call_state is None:
                         continue
                     tool_call, tool_type = tool_call_state.finalize()
-                    tool_call.provider = GenAIAttributes.GenAiProviderNameValues.OPENAI.value
+                    tool_call.provider = (
+                        GenAIAttributes.GenAiProviderNameValues.OPENAI.value
+                    )
                     parts.append(tool_call)
 
             finish_reason = choice.finish_reason or "error"
