@@ -21,6 +21,7 @@ from typing import Any, Iterable, Optional
 from openai import Stream
 
 from opentelemetry._logs import Logger, LogRecord
+from opentelemetry import context as context_api
 from opentelemetry.context import get_current
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
@@ -44,6 +45,7 @@ from opentelemetry.util.genai.types import (
 
 from .instruments import Instruments
 from .utils import (
+    SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY,
     choice_to_event,
     get_llm_request_attributes,
     handle_span_exception,
@@ -388,6 +390,10 @@ def chat_completions_create(
     """Wrap the `create` method of the `ChatCompletion` class to trace it."""
 
     def traced_method(wrapped, instance, args, kwargs):
+        # Check if instrumentation is suppressed (e.g., by LangChain)
+        if context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY):
+            return wrapped(*args, **kwargs)
+
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
         invocation = _build_chat_invocation(
             kwargs, capture_content, span_attributes
@@ -459,6 +465,10 @@ def async_chat_completions_create(
     """Wrap the `create` method of the `AsyncChatCompletion` class to trace it."""
 
     async def traced_method(wrapped, instance, args, kwargs):
+        # Check if instrumentation is suppressed (e.g., by LangChain)
+        if context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY):
+            return await wrapped(*args, **kwargs)
+
         span_attributes = {**get_llm_request_attributes(kwargs, instance)}
         invocation = _build_chat_invocation(
             kwargs, capture_content, span_attributes
@@ -529,6 +539,10 @@ def embeddings_create(
     """Wrap the `create` method of the `Embeddings` class to trace it."""
 
     def traced_method(wrapped, instance, args, kwargs):
+        # Check if instrumentation is suppressed (e.g., by LangChain)
+        if context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY):
+            return wrapped(*args, **kwargs)
+
         span_attributes = get_llm_request_attributes(
             kwargs,
             instance,
@@ -593,6 +607,10 @@ def async_embeddings_create(
     """Wrap the `create` method of the `AsyncEmbeddings` class to trace it."""
 
     async def traced_method(wrapped, instance, args, kwargs):
+        # Check if instrumentation is suppressed (e.g., by LangChain)
+        if context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY):
+            return await wrapped(*args, **kwargs)
+
         span_attributes = get_llm_request_attributes(
             kwargs,
             instance,
