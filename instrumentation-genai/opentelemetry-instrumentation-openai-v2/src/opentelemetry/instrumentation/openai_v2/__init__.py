@@ -51,7 +51,7 @@ from opentelemetry.instrumentation.openai_v2.utils import is_content_enabled
 from opentelemetry.instrumentation.utils import unwrap
 from opentelemetry.metrics import get_meter
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import get_tracer
+from opentelemetry.util.genai.handler import get_telemetry_handler
 
 from .instruments import Instruments
 from .patch import (
@@ -72,12 +72,6 @@ class OpenAIInstrumentor(BaseInstrumentor):
     def _instrument(self, **kwargs):
         """Enable OpenAI instrumentation."""
         tracer_provider = kwargs.get("tracer_provider")
-        tracer = get_tracer(
-            __name__,
-            "",
-            tracer_provider,
-            schema_url=Schemas.V1_28_0.value,
-        )
         logger_provider = kwargs.get("logger_provider")
         logger = get_logger(
             __name__,
@@ -95,11 +89,18 @@ class OpenAIInstrumentor(BaseInstrumentor):
 
         instruments = Instruments(self._meter)
 
+        # Create telemetry handler with the user's providers
+        handler = get_telemetry_handler(
+            tracer_provider=tracer_provider,
+            meter_provider=meter_provider,
+            logger_provider=logger_provider,
+        )
+
         wrap_function_wrapper(
             module="openai.resources.chat.completions",
             name="Completions.create",
             wrapper=chat_completions_create(
-                tracer, logger, instruments, is_content_enabled()
+                logger, instruments, is_content_enabled(), handler
             ),
         )
 
@@ -107,7 +108,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
             module="openai.resources.chat.completions",
             name="AsyncCompletions.create",
             wrapper=async_chat_completions_create(
-                tracer, logger, instruments, is_content_enabled()
+                logger, instruments, is_content_enabled(), handler
             ),
         )
 
@@ -116,7 +117,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
             module="openai.resources.embeddings",
             name="Embeddings.create",
             wrapper=embeddings_create(
-                tracer, instruments, is_content_enabled()
+                instruments, is_content_enabled(), handler
             ),
         )
 
@@ -124,7 +125,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
             module="openai.resources.embeddings",
             name="AsyncEmbeddings.create",
             wrapper=async_embeddings_create(
-                tracer, instruments, is_content_enabled()
+                instruments, is_content_enabled(), handler
             ),
         )
 
