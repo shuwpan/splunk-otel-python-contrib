@@ -209,6 +209,7 @@ def convert_content_to_message_parts(
     return parts
 
 
+<<<<<<< HEAD
 def convert_content_to_input_message(
     content: content.Content | content_v1beta1.Content,
 ) -> InputMessage:
@@ -256,6 +257,8 @@ def _normalize_content_role(
     return role or "user"
 
 
+=======
+>>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
 def _map_finish_reason(
     finish_reason: content.Candidate.FinishReason
     | content_v1beta1.Candidate.FinishReason

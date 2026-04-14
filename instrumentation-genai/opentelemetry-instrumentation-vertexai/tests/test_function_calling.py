@@ -82,7 +82,11 @@ def test_function_call_choice(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
+<<<<<<< HEAD
     assert output_msgs[0]["role"] == "assistant"
+=======
+    assert output_msgs[0]["role"] == "model"
+>>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert output_msgs[0]["finish_reason"] == "stop"
 
     # Content events emitter emits a single event
@@ -154,11 +158,19 @@ def test_tool_events(
             "content": "Get weather details in New Delhi and San Francisco?",
         }
     ]
+<<<<<<< HEAD
     # Second message: assistant with function_call parts (skipped by convert_content_to_message_parts)
     assert input_msgs[1]["role"] == "assistant"
     assert input_msgs[1]["parts"] == []
     # Third message: tool with tool call responses
     assert input_msgs[2]["role"] == "tool"
+=======
+    # Second message: model with function_call parts (skipped by convert_content_to_message_parts)
+    assert input_msgs[1]["role"] == "model"
+    assert input_msgs[1]["parts"] == []
+    # Third message: user with tool call responses
+    assert input_msgs[2]["role"] == "user"
+>>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert len(input_msgs[2]["parts"]) == 2
     assert input_msgs[2]["parts"][0]["type"] == "tool_call_response"
     assert input_msgs[2]["parts"][1]["type"] == "tool_call_response"
@@ -167,7 +179,11 @@ def test_tool_events(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
+<<<<<<< HEAD
     assert output_msgs[0]["role"] == "assistant"
+=======
+    assert output_msgs[0]["role"] == "model"
+>>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert output_msgs[0]["finish_reason"] == "stop"
     assert len(output_msgs[0]["parts"]) == 1
     assert output_msgs[0]["parts"][0]["type"] == "text"
