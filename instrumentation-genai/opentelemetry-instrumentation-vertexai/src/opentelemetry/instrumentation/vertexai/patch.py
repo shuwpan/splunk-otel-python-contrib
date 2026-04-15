@@ -26,6 +26,7 @@ from opentelemetry.instrumentation.vertexai.utils import (
     convert_candidate_to_output_message,
     convert_content_to_input_message,
     convert_content_to_message_parts,
+    extract_tool_definitions,
     get_genai_request_attributes,
     get_server_attributes,
 )
@@ -125,6 +126,9 @@ def _build_invocation(
             for c in params.contents:
                 input_messages.append(convert_content_to_input_message(c))
 
+    # Tool definitions are request metadata, not message content.
+    request_functions = extract_tool_definitions(params.tools)
+
     invocation = LLMInvocation(
         request_model=request_attributes.get(
             GenAIAttributes.GEN_AI_REQUEST_MODEL, ""
@@ -157,6 +161,7 @@ def _build_invocation(
         request_seed=request_attributes.get(
             GenAIAttributes.GEN_AI_REQUEST_SEED
         ),
+        request_functions=request_functions,
     )
 
     # Propagate extra attributes that don't map to LLMInvocation fields

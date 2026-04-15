@@ -63,6 +63,14 @@ def test_function_call_choice(
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
 
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
     # Content on span
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
@@ -78,16 +86,21 @@ def test_function_call_choice(
         }
     ]
 
-    # Output messages on span - function_call parts are skipped (HYBIM-604)
+    # Output messages on span — function_call parts now appear as ToolCall
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-<<<<<<< HEAD
     assert output_msgs[0]["role"] == "assistant"
-=======
-    assert output_msgs[0]["role"] == "model"
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert output_msgs[0]["finish_reason"] == "stop"
+    assert len(output_msgs[0]["parts"]) == 2
+    assert output_msgs[0]["parts"][0]["type"] == "tool_call"
+    assert output_msgs[0]["parts"][0]["name"] == "get_current_weather"
+    assert output_msgs[0]["parts"][0]["arguments"] == {"location": "New Delhi"}
+    assert output_msgs[0]["parts"][1]["type"] == "tool_call"
+    assert output_msgs[0]["parts"][1]["name"] == "get_current_weather"
+    assert output_msgs[0]["parts"][1]["arguments"] == {
+        "location": "San Francisco"
+    }
 
     # Content events emitter emits a single event
     logs = log_exporter.get_finished_logs()
@@ -112,7 +125,17 @@ def test_function_call_choice_no_content(
     attrs = dict(spans[0].attributes)
     assert attrs["gen_ai.operation.name"] == "chat"
     assert attrs["gen_ai.request.model"] == "gemini-2.5-pro"
+    assert attrs["gen_ai.response.finish_reasons"] == ("stop",)
     assert attrs["gen_ai.provider.name"] == "vertex_ai"
+
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
     assert "gen_ai.input.messages" not in attrs
     assert "gen_ai.output.messages" not in attrs
 
@@ -146,7 +169,15 @@ def test_tool_events(
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
 
-    # Content on span: user text, model function_call (skipped), user tool responses, model text response
+    # Tool definitions are always emitted
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
+    # Content on span: user text, model function_call, user tool responses, model text response
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
     assert len(input_msgs) == 3
@@ -158,19 +189,19 @@ def test_tool_events(
             "content": "Get weather details in New Delhi and San Francisco?",
         }
     ]
-<<<<<<< HEAD
-    # Second message: assistant with function_call parts (skipped by convert_content_to_message_parts)
+    # Second message: assistant with function_call parts now mapped to ToolCall
     assert input_msgs[1]["role"] == "assistant"
-    assert input_msgs[1]["parts"] == []
+    assert len(input_msgs[1]["parts"]) == 2
+    assert input_msgs[1]["parts"][0]["type"] == "tool_call"
+    assert input_msgs[1]["parts"][0]["name"] == "get_current_weather"
+    assert input_msgs[1]["parts"][0]["arguments"] == {"location": "New Delhi"}
+    assert input_msgs[1]["parts"][1]["type"] == "tool_call"
+    assert input_msgs[1]["parts"][1]["name"] == "get_current_weather"
+    assert input_msgs[1]["parts"][1]["arguments"] == {
+        "location": "San Francisco"
+    }
     # Third message: tool with tool call responses
     assert input_msgs[2]["role"] == "tool"
-=======
-    # Second message: model with function_call parts (skipped by convert_content_to_message_parts)
-    assert input_msgs[1]["role"] == "model"
-    assert input_msgs[1]["parts"] == []
-    # Third message: user with tool call responses
-    assert input_msgs[2]["role"] == "user"
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert len(input_msgs[2]["parts"]) == 2
     assert input_msgs[2]["parts"][0]["type"] == "tool_call_response"
     assert input_msgs[2]["parts"][1]["type"] == "tool_call_response"
@@ -179,11 +210,7 @@ def test_tool_events(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-<<<<<<< HEAD
     assert output_msgs[0]["role"] == "assistant"
-=======
-    assert output_msgs[0]["role"] == "model"
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert output_msgs[0]["finish_reason"] == "stop"
     assert len(output_msgs[0]["parts"]) == 1
     assert output_msgs[0]["parts"][0]["type"] == "text"
@@ -218,6 +245,17 @@ def test_tool_events_no_content(
     assert attrs["gen_ai.usage.output_tokens"] == 22
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
+
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
+    # finish_reason stays "stop" because the *response* is a final text
+    # answer (no function_call parts in the response candidates)
     assert "gen_ai.input.messages" not in attrs
     assert "gen_ai.output.messages" not in attrs
 
