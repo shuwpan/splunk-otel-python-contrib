@@ -14,10 +14,7 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD
 import json
-=======
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
 from typing import (
     TYPE_CHECKING,
     Any,
