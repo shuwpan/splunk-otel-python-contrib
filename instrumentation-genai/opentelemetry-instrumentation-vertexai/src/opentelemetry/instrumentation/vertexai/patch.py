@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -231,7 +232,7 @@ def generate_content(capture_content: bool, handler: TelemetryHandler):
                     InvocationError(message=str(error), type=type(error)),
                 )
             except Exception:
-                pass
+                logging.exception("Failed to record LLM error")
             raise
 
         try:
@@ -246,7 +247,7 @@ def generate_content(capture_content: bool, handler: TelemetryHandler):
                     InvocationError(message=str(error), type=type(error)),
                 )
             except Exception:
-                pass
+                logging.exception("Failed to record LLM response")
 
         return response
 
@@ -271,7 +272,7 @@ def agenerate_content(capture_content: bool, handler: TelemetryHandler):
                     InvocationError(message=str(error), type=type(error)),
                 )
             except Exception:
-                pass
+                logging.exception("Failed to record LLM error")
             raise
 
         try:
@@ -286,7 +287,7 @@ def agenerate_content(capture_content: bool, handler: TelemetryHandler):
                     InvocationError(message=str(error), type=type(error)),
                 )
             except Exception:
-                pass
+                logging.exception("Failed to record LLM response")
 
         return response
 
