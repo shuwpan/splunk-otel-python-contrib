@@ -63,6 +63,12 @@ target
 # Benchmark result files
 *-benchmark.json
 
+# GCP service account keys
+**/gcp-*.json
+
+# Environment files with secrets
+.env
+
 # Local working files (PR descriptions, notes, drafts)
 .local/
 

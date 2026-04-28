@@ -6,7 +6,8 @@ Demonstrates a ReAct-style agentic loop using the native VertexAI SDK
 via VertexAIInstrumentor.
 
 Run modes:
-1. Default (no CLI args): queries "What is the weather in San Francisco?" and exits.
+1. Default (no CLI args): queries "What is the weather in San Francisco?" and exits.    `-  h
+
 2. CLI mode: python main.py --city "Paris"
 
 Required environment variables:
@@ -19,9 +20,12 @@ Optional:
 """
 
 import argparse
+import logging
 import os
 
 import requests
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
 import vertexai
 from dotenv import load_dotenv
 from vertexai.generative_models import (
@@ -32,16 +36,23 @@ from vertexai.generative_models import (
 )
 
 # NOTE: OpenTelemetry Python Logs and Events APIs are in beta
-from opentelemetry import _logs, trace
+from opentelemetry import _events, _logs, metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
     OTLPLogExporter,
+)
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+    OTLPMetricExporter,
 )
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter,
 )
 from opentelemetry.instrumentation.vertexai import VertexAIInstrumentor
+from opentelemetry.util.genai.handler import get_telemetry_handler
+from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
@@ -62,11 +73,16 @@ trace.get_tracer_provider().add_span_processor(
     BatchSpanProcessor(OTLPSpanExporter())
 )
 
+# --- Configure metrics ---
+metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
+
 # --- Configure logging / events ---
 _logs.set_logger_provider(LoggerProvider())
 _logs.get_logger_provider().add_log_record_processor(
     BatchLogRecordProcessor(OTLPLogExporter())
 )
+_events.set_event_logger_provider(EventLoggerProvider())
 
 # --- Instrument VertexAI ---
 VertexAIInstrumentor().instrument()
@@ -212,6 +228,21 @@ def main():
     print(f"Query: {query}\n")
     result = run_agent(query)
     print(result)
+
+    # Wait for async evaluations to complete (DeepEval calls OpenAI, can take 30s+)
+    handler = get_telemetry_handler()
+    print("Waiting for evaluations...")
+    handler.wait_for_evaluations(timeout=120)
+    print("Evaluations done, flushing telemetry...")
+
+    # Give emitters a moment to flush evaluation results
+    import time
+    time.sleep(5)
+
+    # Flush spans and logs before exit
+    trace.get_tracer_provider().shutdown()
+    _logs.get_logger_provider().shutdown()
+    print("Shutdown complete.")
 
 
 if __name__ == "__main__":
