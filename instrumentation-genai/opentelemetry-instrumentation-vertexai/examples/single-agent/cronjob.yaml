@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: otel-vertexai-single-agent
-  namespace: 
+  namespace: vertexai-agent
   labels:
     app: otel-vertexai-single-agent
     component: genai-instrumentation
@@ -22,7 +22,7 @@ spec:
         spec:
           containers:
             - name: otel-vertexai-single-agent
-              image: 
+              image: shuwpan/otel-vertexai-single-agent:latest
               imagePullPolicy: Always
               env:
                 # OpenTelemetry configuration
@@ -66,30 +66,30 @@ spec:
                 - name: DEEPEVAL_FILE_SYSTEM
                   value: "READ_ONLY"
                 - name: DEEPEVAL_LLM_BASE_URL
-                  value: ""
+                  value: "https://chat-ai.cisco.com/openai/deployments/gpt-5-nano"
                 - name: DEEPEVAL_LLM_MODEL
-                  value: "gpt-4o-mini"
+                  value: "gpt-5-nano"
                 - name: DEEPEVAL_LLM_PROVIDER
                   value: "openai"
                 - name: DEEPEVAL_LLM_CLIENT_ID
                   valueFrom:
                     secretKeyRef:
-                      name: 
+                      name: circuit-oauth-secrets
                       key: client-id
                 - name: DEEPEVAL_LLM_CLIENT_SECRET
                   valueFrom:
                     secretKeyRef:
-                      name: 
+                      name: circuit-oauth-secrets
                       key: client-secret
                 - name: DEEPEVAL_LLM_TOKEN_URL
-                  value: ""
+                  value: "https://id.cisco.com/oauth2/default/v1/token"
                 - name: DEEPEVAL_LLM_CLIENT_APP_NAME
-                  value: ""
+                  value: "egai-prd-other-020027861-newcontent-1770913440554"
                 # GCP / Vertex AI configuration
                 - name: GOOGLE_CLOUD_PROJECT
-                  value: ""
+                  value: "gcp-o11yinframon-nprd-81065"
                 - name: GOOGLE_CLOUD_LOCATION
-                  value: ""
+                  value: "us-central1"
                 - name: GOOGLE_APPLICATION_CREDENTIALS
                   value: "/etc/gcp/sa-key.json"
                 # Debug / Runtime settings
@@ -113,5 +113,5 @@ spec:
           volumes:
             - name: gcp-sa-key
               secret:
-                secretName: 
+                secretName: gcp-vertexai-secrets
           restartPolicy: OnFailure

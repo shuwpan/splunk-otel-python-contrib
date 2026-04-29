@@ -122,6 +122,49 @@ class OAuth2TokenManager:
         self._token_expiry = 0
 
 
+def _make_proxy_safe_model_class() -> type | None:
+    """Create a LiteLLMModel subclass safe for custom/proxy endpoints.
+
+    Applies two fixes for common proxy compatibility issues:
+
+    1. **Structured outputs**: Many custom LLM endpoints (corporate proxies,
+       vLLM, etc.) don't support ``response_format`` with Pydantic schemas.
+       This subclass strips the ``schema`` parameter, forcing text-based JSON
+       parsing. DeepEval's prompts already request JSON output, so
+       ``trimAndLoadJson`` handles the response.
+
+    2. **Unsupported parameters**: Some models (e.g. gpt-5-nano) reject
+       ``temperature=0.0``. Setting ``litellm.drop_params = True`` makes
+       LiteLLM silently drop unsupported parameters instead of raising.
+    """
+    try:
+        from deepeval.models import LiteLLMModel
+    except ImportError:
+        return None
+
+    if not isinstance(LiteLLMModel, type):
+        return None
+
+    class _ProxyLiteLLMModel(LiteLLMModel):
+        """LiteLLMModel safe for custom/proxy endpoints."""
+
+        def generate(self, prompt: str, schema: Any | None = None) -> Any:
+            import litellm
+
+            litellm.drop_params = True
+            return super().generate(prompt, schema=None)
+
+        async def a_generate(
+            self, prompt: str, schema: Any | None = None
+        ) -> Any:
+            import litellm
+
+            litellm.drop_params = True
+            return await super().a_generate(prompt, schema=None)
+
+    return _ProxyLiteLLMModel
+
+
 def create_eval_model() -> Any | None:
     """
     Create LiteLLM-based eval model from environment variables.
@@ -132,9 +175,10 @@ def create_eval_model() -> Any | None:
     Environment Variables:
         TEMPERATURE: 1
 
-    If DEEPEVAL_LLM_BASE_URL is set, creates a LiteLLMModel configured
-    for the custom endpoint. Supports both static API keys and OAuth2
-    token-based authentication.
+    If DEEPEVAL_LLM_BASE_URL is set, creates a proxy-safe LiteLLMModel
+    that disables structured outputs (response_format with Pydantic schemas)
+    which most custom endpoints don't support. Supports both static API keys
+    and OAuth2 token-based authentication.
 
     Environment Variables:
         DEEPEVAL_LLM_BASE_URL: Custom LLM endpoint (required for custom model)
@@ -156,7 +200,7 @@ def create_eval_model() -> Any | None:
         DEEPEVAL_LLM_AUTH_METHOD: Token auth method - "basic" or "post"
 
     Returns:
-        LiteLLMModel instance if configured, None otherwise (uses default OpenAI)
+        Proxy-safe LiteLLMModel instance if configured, None otherwise (uses default OpenAI)
 
     Example - OAuth2 with Basic Auth (Okta-style):
         DEEPEVAL_LLM_BASE_URL=https://llm-gateway.example.com/openai/deployments/gpt-4o-mini
@@ -194,11 +238,12 @@ def create_eval_model() -> Any | None:
     if not base_url:
         return None  # Use default OpenAI
 
-    try:
-        from deepeval.models import LiteLLMModel
-    except ImportError:
-        # LiteLLM not installed, fall back to default
-        return None
+    ProxyModel = _make_proxy_safe_model_class()
+    if ProxyModel is None:
+        try:
+            from deepeval.models import LiteLLMModel as ProxyModel
+        except ImportError:
+            return None
 
     model = os.environ.get("DEEPEVAL_LLM_MODEL", "gpt-4o-mini")
     provider = os.environ.get("DEEPEVAL_LLM_PROVIDER", "openai")
@@ -257,7 +302,7 @@ def create_eval_model() -> Any | None:
     if extra_headers:
         generation_kwargs["extra_headers"] = extra_headers
 
-    return LiteLLMModel(
+    return ProxyModel(
         model=f"{provider}/{model}",
         base_url=base_url,
         api_key=api_key or "placeholder",
