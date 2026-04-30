@@ -163,7 +163,7 @@ def test_tool_events(
     )
     assert "gen_ai.request.function.0.parameters" in attrs
 
-    # Content on span: user text, model function_call, user tool responses, model text response
+    # Content on span: user text, assistant function_call, tool responses, assistant text response
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
     assert len(input_msgs) == 3

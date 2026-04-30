@@ -86,11 +86,7 @@ def test_generate_content(
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert output_msgs == [
         {
-<<<<<<< HEAD
             "role": "assistant",
-=======
-            "role": "model",
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
             "parts": [{"type": "text", "content": "This is a test."}],
             "finish_reason": "stop",
         }
@@ -108,11 +104,7 @@ def test_generate_content(
     ]
     assert body["gen_ai.output.messages"] == [
         {
-<<<<<<< HEAD
             "role": "assistant",
-=======
-            "role": "model",
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
             "parts": [{"type": "text", "content": "This is a test."}],
             "finish_reason": "stop",
         }
@@ -392,11 +384,7 @@ def generate_content_all_input_messages(
     assert input_msgs[0]["parts"] == [
         {"type": "text", "content": "My name is OpenTelemetry"}
     ]
-<<<<<<< HEAD
     assert input_msgs[1]["role"] == "assistant"
-=======
-    assert input_msgs[1]["role"] == "model"
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert input_msgs[1]["parts"] == [
         {"type": "text", "content": "Hello OpenTelemetry!"}
     ]
@@ -412,11 +400,7 @@ def generate_content_all_input_messages(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-<<<<<<< HEAD
     assert output_msgs[0]["role"] == "assistant"
-=======
-    assert output_msgs[0]["role"] == "model"
->>>>>>> e7af21e (HYBIM-623: Migrate Vertex AI instrumentation to TelemetryHandler/LLMInvocation)
     assert output_msgs[0]["parts"] == [
         {"type": "text", "content": "OpenTelemetry, this is a test."}
     ]
