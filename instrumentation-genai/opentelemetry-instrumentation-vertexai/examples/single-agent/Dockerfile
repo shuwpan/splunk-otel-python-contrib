@@ -24,11 +24,11 @@ COPY instrumentation-genai/opentelemetry-instrumentation-vertexai /tmp/opentelem
 
 # Install local packages with --no-deps to avoid version conflicts
 # between local dev packages (requirements.txt covers external deps)
-RUN pip install --no-deps /tmp/opentelemetry-util-genai \
-    /tmp/opentelemetry-util-genai-evals \
+RUN pip install --no-deps /tmp/opentelemetry-util-genai-evals \
     /tmp/opentelemetry-util-genai-evals-deepeval \
     /tmp/opentelemetry-util-genai-emitters-splunk \
-    /tmp/opentelemetry-instrumentation-vertexai
+    /tmp/opentelemetry-instrumentation-vertexai \
+    && pip install --no-deps /tmp/opentelemetry-util-genai
 
 # Copy application code
 COPY instrumentation-genai/opentelemetry-instrumentation-vertexai/examples/single-agent/main.py .
