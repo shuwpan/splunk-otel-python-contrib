@@ -23,6 +23,7 @@ from google.cloud.aiplatform_v1beta1.types import (
 
 from opentelemetry.instrumentation.vertexai.utils import (
     _map_finish_reason,
+    convert_content_to_input_message,
     convert_content_to_message_parts,
     extract_tool_definitions,
     get_server_attributes,
@@ -124,6 +125,36 @@ def test_convert_content_mixed_parts():
     assert parts[1].name == "search"
     assert parts[2].type == "tool_call_response"
     assert parts[2].response == {"answer": "world"}
+
+
+def test_convert_content_to_input_message_normalizes_roles():
+    """Vertex AI provider roles are normalized to OTel GenAI roles."""
+    model_message = convert_content_to_input_message(
+        content.Content(
+            {
+                "role": "model",
+                "parts": [{"text": "hello"}],
+            }
+        )
+    )
+    assert model_message.role == "assistant"
+
+    tool_message = convert_content_to_input_message(
+        content.Content(
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "name": "search",
+                            "response": {"answer": "world"},
+                        }
+                    }
+                ],
+            }
+        )
+    )
+    assert tool_message.role == "tool"
 
 
 def test_extract_tool_definitions():

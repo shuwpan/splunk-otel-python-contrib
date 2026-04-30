@@ -36,7 +36,9 @@ from opentelemetry.semconv.attributes import server_attributes
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
     FinishReason,
+    InputMessage,
     MessagePart,
+    OutputMessage,
     Text,
     ToolCall,
     ToolCallResponse,
@@ -217,6 +219,53 @@ def convert_content_to_message_parts(
         else:
             logging.warning("Unknown part dropped from telemetry %s", part)
     return parts
+
+
+def convert_content_to_input_message(
+    content: content.Content | content_v1beta1.Content,
+) -> InputMessage:
+    """Convert Vertex AI Content proto to a normalized util-genai InputMessage."""
+    parts = convert_content_to_message_parts(content)
+    return InputMessage(
+        role=_normalize_content_role(getattr(content, "role", None), parts),
+        parts=parts,
+    )
+
+
+def convert_candidate_to_output_message(
+    candidate: content.Candidate | content_v1beta1.Candidate,
+    *,
+    capture_content: bool,
+) -> OutputMessage:
+    """Convert a Vertex AI candidate to a normalized util-genai OutputMessage."""
+    parts = (
+        convert_content_to_message_parts(candidate.content)
+        if capture_content
+        else []
+    )
+    return OutputMessage(
+        role=_normalize_content_role(
+            getattr(candidate.content, "role", None), parts
+        ),
+        parts=parts,
+        finish_reason=_map_finish_reason(candidate.finish_reason),
+    )
+
+
+def _normalize_content_role(
+    role: str | None,
+    parts: Sequence[MessagePart],
+) -> str:
+    """Map Vertex AI provider roles to OTel GenAI message roles."""
+    if role == "model":
+        return "assistant"
+    if (
+        role == "user"
+        and parts
+        and all(isinstance(part, ToolCallResponse) for part in parts)
+    ):
+        return "tool"
+    return role or "user"
 
 
 def _map_finish_reason(

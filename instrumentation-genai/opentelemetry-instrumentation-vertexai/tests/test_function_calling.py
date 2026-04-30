@@ -76,7 +76,7 @@ def test_function_call_choice(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-    assert output_msgs[0]["role"] == "model"
+    assert output_msgs[0]["role"] == "assistant"
     assert output_msgs[0]["finish_reason"] == "stop"
     assert len(output_msgs[0]["parts"]) == 2
     assert output_msgs[0]["parts"][0]["type"] == "tool_call"
@@ -176,7 +176,7 @@ def test_tool_events(
         }
     ]
     # Second message: model with function_call parts now mapped to ToolCall
-    assert input_msgs[1]["role"] == "model"
+    assert input_msgs[1]["role"] == "assistant"
     assert len(input_msgs[1]["parts"]) == 2
     assert input_msgs[1]["parts"][0]["type"] == "tool_call"
     assert input_msgs[1]["parts"][0]["name"] == "get_current_weather"
@@ -187,7 +187,7 @@ def test_tool_events(
         "location": "San Francisco"
     }
     # Third message: user with tool call responses
-    assert input_msgs[2]["role"] == "user"
+    assert input_msgs[2]["role"] == "tool"
     assert len(input_msgs[2]["parts"]) == 2
     assert input_msgs[2]["parts"][0]["type"] == "tool_call_response"
     assert input_msgs[2]["parts"][1]["type"] == "tool_call_response"
@@ -196,7 +196,7 @@ def test_tool_events(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-    assert output_msgs[0]["role"] == "model"
+    assert output_msgs[0]["role"] == "assistant"
     assert output_msgs[0]["finish_reason"] == "stop"
     assert len(output_msgs[0]["parts"]) == 1
     assert output_msgs[0]["parts"][0]["type"] == "text"
