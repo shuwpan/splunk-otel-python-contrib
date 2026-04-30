@@ -23,7 +23,8 @@ from typing import (
 
 from opentelemetry.instrumentation.vertexai.utils import (
     GenerateContentParams,
-    _map_finish_reason,
+    convert_candidate_to_output_message,
+    convert_content_to_input_message,
     convert_content_to_message_parts,
     get_genai_request_attributes,
     get_server_attributes,
@@ -122,12 +123,7 @@ def _build_invocation(
             )
         if params.contents:
             for c in params.contents:
-                input_messages.append(
-                    InputMessage(
-                        role=c.role or "user",
-                        parts=convert_content_to_message_parts(c),
-                    )
-                )
+                input_messages.append(convert_content_to_input_message(c))
 
     invocation = LLMInvocation(
         request_model=request_attributes.get(
@@ -200,18 +196,13 @@ def _apply_response_to_invocation(
     finish_reasons = []
     output_messages: list[OutputMessage] = []
     for candidate in response.candidates:
-        fr = _map_finish_reason(candidate.finish_reason)
-        finish_reasons.append(fr)
-        parts = []
-        if capture_content:
-            parts = convert_content_to_message_parts(candidate.content)
-        output_messages.append(
-            OutputMessage(
-                role=candidate.content.role or "model",
-                parts=parts,
-                finish_reason=fr,
-            )
+        output_message = convert_candidate_to_output_message(
+            candidate,
+            capture_content=capture_content,
         )
+        fr = output_message.finish_reason
+        finish_reasons.append(fr)
+        output_messages.append(output_message)
 
     invocation.response_finish_reasons = finish_reasons
     invocation.output_messages = output_messages

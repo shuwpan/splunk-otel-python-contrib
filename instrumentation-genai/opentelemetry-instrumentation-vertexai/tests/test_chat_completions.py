@@ -100,7 +100,7 @@ def test_generate_content(
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert output_msgs == [
         {
-            "role": "model",
+            "role": "assistant",
             "parts": [{"type": "text", "content": "This is a test."}],
             "finish_reason": "stop",
         }
@@ -118,7 +118,7 @@ def test_generate_content(
     ]
     assert body["gen_ai.output.messages"] == [
         {
-            "role": "model",
+            "role": "assistant",
             "parts": [{"type": "text", "content": "This is a test."}],
             "finish_reason": "stop",
         }
@@ -398,7 +398,7 @@ def generate_content_all_input_messages(
     assert input_msgs[0]["parts"] == [
         {"type": "text", "content": "My name is OpenTelemetry"}
     ]
-    assert input_msgs[1]["role"] == "model"
+    assert input_msgs[1]["role"] == "assistant"
     assert input_msgs[1]["parts"] == [
         {"type": "text", "content": "Hello OpenTelemetry!"}
     ]
@@ -414,7 +414,7 @@ def generate_content_all_input_messages(
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
-    assert output_msgs[0]["role"] == "model"
+    assert output_msgs[0]["role"] == "assistant"
     assert output_msgs[0]["parts"] == [
         {"type": "text", "content": "OpenTelemetry, this is a test."}
     ]
