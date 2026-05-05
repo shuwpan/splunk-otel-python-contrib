@@ -1,0 +1,5 @@
+# CRM Ops Desk — production dependencies (PyPI packages)
+-r requirements-app.txt
+splunk-otel-util-genai
+splunk-otel-genai-emitters-splunk
+splunk-otel-instrumentation-langchain

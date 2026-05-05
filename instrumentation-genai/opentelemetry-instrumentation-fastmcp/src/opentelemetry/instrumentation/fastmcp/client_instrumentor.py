@@ -15,24 +15,84 @@
 """FastMCP client-side instrumentation."""
 
 import logging
-import time
+import uuid
+from typing import Any, Callable
 
 from wrapt import register_post_import_hook, wrap_function_wrapper
 
 from opentelemetry.util.genai.handler import TelemetryHandler
 from opentelemetry.util.genai.types import (
-    AgentInvocation,
-    Step,
     Error,
+    MCPOperation,
     MCPToolCall,
 )
 from opentelemetry.instrumentation.fastmcp.utils import (
+    FASTMCP_FRAMEWORK,
+    HTTP_PROTOCOL_NAME,
+    HTTP_PROTOCOL_VERSION_DEFAULT,
+    MCP_SYSTEM,
+    TRANSPORT_TCP,
+    detect_transport,
+    extract_protocol_version,
+    extract_server_info,
+    extract_session_id,
     safe_serialize,
-    should_capture_content,
     truncate_if_needed,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _enrich_client_op(op: MCPOperation, instance: object) -> None:
+    """Populate transport-derived fields on a client-side MCP operation."""
+    if op.network_transport == TRANSPORT_TCP:
+        op.network_protocol_name = HTTP_PROTOCOL_NAME
+        op.network_protocol_version = (
+            op.network_protocol_version or HTTP_PROTOCOL_VERSION_DEFAULT
+        )
+        addr, port = extract_server_info(instance)
+        if addr:
+            op.server_address = addr
+        if port:
+            op.server_port = port
+
+    sid = extract_session_id(instance)
+    if sid:
+        op.mcp_session_id = sid
+
+    pv = extract_protocol_version(instance)
+    if pv:
+        op.mcp_protocol_version = pv
+
+
+def _traced_mcp_operation(
+    handler: TelemetryHandler,
+    build_op: Callable[[Any, str], MCPOperation],
+) -> Callable:
+    """Generic async wrapper for MCPOperation lifecycle.
+
+    ``build_op(instance, transport)`` must return a ready-to-start
+    :class:`MCPOperation`. The wrapper handles start / stop / fail
+    and duration timing.
+    """
+
+    async def wrapper(wrapped, instance, args, kwargs):
+        transport = detect_transport(instance)
+        op = build_op(instance, transport)
+        _enrich_client_op(op, instance)
+
+        handler.start_mcp_operation(op)
+        try:
+            result = await wrapped(*args, **kwargs)
+            handler.stop_mcp_operation(op)
+            return result
+        except Exception as e:
+            op.is_error = True
+            op.error_type = type(e).__name__
+            handler.fail_mcp_operation(op, Error(type=type(e), message=str(e)))
+            raise
+
+    return wrapper
 
 
 class ClientInstrumentor:
@@ -41,175 +101,178 @@ class ClientInstrumentor:
     Instruments:
     - FastMCP Client.__aenter__: Start client session trace
     - FastMCP Client.__aexit__: End client session trace
-    - MCP client operations (list_tools, call_tool)
+    - Client.call_tool, list_tools, read_resource, get_prompt
     """
 
     def __init__(self, telemetry_handler: TelemetryHandler):
         self._handler = telemetry_handler
-        self._active_sessions: dict[int, AgentInvocation] = {}
+        self._active_sessions: dict[int, MCPOperation] = {}
 
     def instrument(self):
         """Apply FastMCP client-side instrumentation."""
-        # Instrument FastMCP Client session lifecycle
-        register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+        hooks = {
+            "Client.__aenter__": self._client_enter_wrapper(),
+            "Client.__aexit__": self._client_exit_wrapper(),
+            "Client.call_tool": self._client_call_tool_wrapper(),
+            "Client.list_tools": self._client_list_tools_wrapper(),
+            "Client.read_resource": self._client_read_resource_wrapper(),
+            "Client.get_prompt": self._client_get_prompt_wrapper(),
+        }
+        for target, wrapper in hooks.items():
+            register_post_import_hook(
+                lambda _, t=target, w=wrapper: wrap_function_wrapper(
+                    "fastmcp.client", t, w
+                ),
                 "fastmcp.client",
-                "Client.__aenter__",
-                self._client_enter_wrapper(),
-            ),
-            "fastmcp.client",
-        )
-
-        register_post_import_hook(
-            lambda _: wrap_function_wrapper(
-                "fastmcp.client",
-                "Client.__aexit__",
-                self._client_exit_wrapper(),
-            ),
-            "fastmcp.client",
-        )
-
-        # Instrument client tool operations
-        register_post_import_hook(
-            lambda _: wrap_function_wrapper(
-                "fastmcp.client",
-                "Client.call_tool",
-                self._client_call_tool_wrapper(),
-            ),
-            "fastmcp.client",
-        )
-
-        register_post_import_hook(
-            lambda _: wrap_function_wrapper(
-                "fastmcp.client",
-                "Client.list_tools",
-                self._client_list_tools_wrapper(),
-            ),
-            "fastmcp.client",
-        )
+            )
 
     def uninstrument(self):
         """Remove FastMCP client-side instrumentation.
 
         Note: wrapt doesn't provide a clean way to unwrap post-import hooks.
-        This is a known limitation.
         """
         pass
 
+    # ------------------------------------------------------------------
+    # Session lifecycle
+    # ------------------------------------------------------------------
     def _client_enter_wrapper(self):
-        """Wrapper for FastMCP Client.__aenter__ to start a session trace."""
+        """Wrapper for FastMCP Client.__aenter__ — creates an ``initialize`` root span.
+
+        The span remains open until ``__aexit__`` so that all MCP operations
+        within the session are recorded as children.  This approach makes
+        ``initialize`` the root span for standalone FastMCP apps while still
+        nesting correctly under outer GenAI spans (e.g. LangChain, OpenAI).
+        """
         instrumentor = self
         handler = self._handler
 
         async def traced_enter(wrapped, instance, args, kwargs):
+            transport = detect_transport(instance)
+
+            init_op = MCPOperation(
+                target="",
+                mcp_method_name="initialize",
+                network_transport=transport,
+                is_client=True,
+                framework=FASTMCP_FRAMEWORK,
+                system=MCP_SYSTEM,
+            )
+
+            # Pre-connect: populate server address/port for HTTP transport
+            if transport == TRANSPORT_TCP:
+                init_op.network_protocol_name = HTTP_PROTOCOL_NAME
+                init_op.network_protocol_version = HTTP_PROTOCOL_VERSION_DEFAULT
+                addr, port = extract_server_info(instance)
+                if addr:
+                    init_op.server_address = addr
+                if port:
+                    init_op.server_port = port
+
+            handler.start_mcp_operation(init_op)
+
             try:
-                # Call original
                 result = await wrapped(*args, **kwargs)
 
-                # Create an AgentInvocation to represent the client session
-                session = AgentInvocation(
-                    name="mcp.client",
-                    agent_type="mcp_client",
-                    framework="fastmcp",
-                    system="mcp",
-                )
-                session.attributes["gen_ai.operation.name"] = "mcp.client_session"
-                session.attributes["network.transport"] = "pipe"  # stdio = pipe
+                # Post-connect: enrich with protocol version and server name
+                try:
+                    init_result = getattr(instance, "initialize_result", None)
+                    if init_result is not None:
+                        if hasattr(init_result, "protocolVersion"):
+                            init_op.mcp_protocol_version = str(
+                                init_result.protocolVersion
+                            )
+                        if (
+                            hasattr(init_result, "serverInfo")
+                            and init_result.serverInfo
+                        ):
+                            init_op.sdot_mcp_server_name = str(
+                                init_result.serverInfo.name
+                            )
+                except AttributeError:
+                    _LOGGER.debug(
+                        "Failed to enrich initialize span with server info",
+                        exc_info=True,
+                    )
 
-                # Store session by instance id
-                instrumentor._active_sessions[id(instance)] = session
+                # Post-connect: capture session ID (available after handshake)
+                sid = extract_session_id(instance)
+                if sid:
+                    init_op.mcp_session_id = sid
 
-                # Start agent invocation
-                handler.start_agent(session)
-
+                instrumentor._active_sessions[id(instance)] = init_op
                 return result
+
             except Exception as e:
-                _LOGGER.debug(f"Error in client enter wrapper: {e}", exc_info=True)
-                return await wrapped(*args, **kwargs)
+                init_op.is_error = True
+                init_op.error_type = type(e).__name__
+                handler.fail_mcp_operation(init_op, Error(type=type(e), message=str(e)))
+                raise
 
         return traced_enter
 
     def _client_exit_wrapper(self):
-        """Wrapper for FastMCP Client.__aexit__ to end the session trace."""
+        """Wrapper for FastMCP Client.__aexit__ — closes the ``initialize`` session span."""
         instrumentor = self
         handler = self._handler
 
         async def traced_exit(wrapped, instance, args, kwargs):
             try:
-                # Get active session
-                session = instrumentor._active_sessions.pop(id(instance), None)
-
-                # Check if exit was due to an exception
+                init_op = instrumentor._active_sessions.pop(id(instance), None)
                 exc_type = args[0] if args else None
 
-                if session:
+                if init_op:
                     if exc_type:
-                        session.attributes["error.type"] = (
+                        init_op.is_error = True
+                        init_op.mcp_error_type = (
                             exc_type.__qualname__
                             if isinstance(exc_type, type)
                             else str(exc_type)
                         )
-                        handler.fail_agent(
-                            session,
+                        handler.fail_mcp_operation(
+                            init_op,
                             Error(
                                 type=exc_type,
                                 message=str(args[1]) if len(args) > 1 else "",
                             ),
                         )
                     else:
-                        handler.stop_agent(session)
+                        handler.stop_mcp_operation(init_op)
 
                 return await wrapped(*args, **kwargs)
             except Exception as e:
-                _LOGGER.debug(f"Error in client exit wrapper: {e}", exc_info=True)
+                _LOGGER.debug("Error in client exit wrapper: %s", e, exc_info=True)
                 return await wrapped(*args, **kwargs)
 
         return traced_exit
 
+    # ------------------------------------------------------------------
+    # tools/call (unique logic — not DRY-able with MCPOperation helpers)
+    # ------------------------------------------------------------------
     def _client_call_tool_wrapper(self):
-        """Wrapper for FastMCP Client.call_tool.
-
-        Uses ToolCall (not Step) to enable MCP-specific metrics:
-        - mcp.client.operation.duration
-        - mcp.tool.output.size
-        """
+        """Wrapper for FastMCP Client.call_tool."""
         handler = self._handler
-        instrumentor = self
 
         async def traced_call_tool(wrapped, instance, args, kwargs):
-            import uuid
-
-            # Extract tool name
             tool_name = args[0] if args else kwargs.get("name", "unknown")
             tool_args = args[1] if len(args) > 1 else kwargs.get("arguments", {})
 
-            # Get parent agent invocation for context
-            parent_session = instrumentor._active_sessions.get(id(instance))
+            transport = detect_transport(instance)
 
-            # Create a MCPToolCall for proper MCP metrics emission
             tool_call = MCPToolCall(
                 name=tool_name,
                 arguments=tool_args,
                 id=str(uuid.uuid4()),
-                framework="fastmcp",
-                provider="mcp",
-                # Per execute_tool semconv: tool_type indicates type of tool
-                # MCP tools are "extension" - executed on agent-side calling external APIs
+                framework=FASTMCP_FRAMEWORK,
+                system=MCP_SYSTEM,
                 tool_type="extension",
-                # MCP semantic convention fields for metrics
                 mcp_method_name="tools/call",
-                network_transport="pipe",  # stdio = pipe
-                is_client=True,  # This is client-side
+                network_transport=transport,
+                is_client=True,
             )
+            _enrich_client_op(tool_call, instance)
 
-            # Link to parent agent if available
-            if parent_session:
-                tool_call.agent_name = parent_session.name
-                tool_call.agent_id = parent_session.agent_id
-
-            # arguments is already set in constructor above
-            # If content capture is enabled and args are complex, serialize them
-            if should_capture_content() and tool_args:
+            if tool_args:
                 try:
                     serialized = safe_serialize(tool_args)
                     if serialized:
@@ -219,12 +282,8 @@ class ClientInstrumentor:
 
             handler.start_tool_call(tool_call)
 
-            start_time = time.time()
             try:
                 result = await wrapped(*args, **kwargs)
-
-                duration = time.time() - start_time
-                tool_call.duration_s = duration
 
                 output_size = 0
                 if result:
@@ -232,73 +291,96 @@ class ClientInstrumentor:
                         serialized = safe_serialize(result)
                         if serialized:
                             output_size = len(serialized.encode("utf-8"))
-                            if should_capture_content():
-                                tool_call.tool_result = truncate_if_needed(serialized)
+                            tool_call.tool_result = truncate_if_needed(serialized)
                     except Exception:
                         pass
 
-                # Track output size for LLM context awareness
                 tool_call.output_size_bytes = output_size
 
                 handler.stop_tool_call(tool_call)
                 return result
 
             except Exception as e:
-                duration = time.time() - start_time
-                tool_call.duration_s = duration
                 tool_call.is_error = True
+                tool_call.error_type = type(e).__name__
                 handler.fail_tool_call(tool_call, Error(type=type(e), message=str(e)))
                 raise
 
         return traced_call_tool
 
+    # ------------------------------------------------------------------
+    # MCPOperation wrappers (list, read, get)
+    # ------------------------------------------------------------------
     def _client_list_tools_wrapper(self):
         """Wrapper for FastMCP Client.list_tools."""
+        return _traced_mcp_operation(
+            self._handler,
+            lambda _inst, transport: MCPOperation(
+                target="",
+                mcp_method_name="tools/list",
+                network_transport=transport,
+                is_client=True,
+                framework=FASTMCP_FRAMEWORK,
+                system=MCP_SYSTEM,
+            ),
+        )
+
+    def _client_read_resource_wrapper(self):
+        """Wrapper for FastMCP Client.read_resource."""
         handler = self._handler
 
-        async def traced_list_tools(wrapped, instance, args, kwargs):
-            # Create a Step to represent the list_tools operation
-            # Using MCP semantic convention attribute names
-            step = Step(
-                name="list_tools",
-                step_type="admin",
-                source="agent",
-                framework="fastmcp",
-                system="mcp",
+        async def traced_read_resource(wrapped, instance, args, kwargs):
+            uri = str(args[0]) if args else str(kwargs.get("uri", ""))
+            transport = detect_transport(instance)
+            op = MCPOperation(
+                target=uri,
+                mcp_method_name="resources/read",
+                network_transport=transport,
+                mcp_resource_uri=uri or None,
+                is_client=True,
+                framework=FASTMCP_FRAMEWORK,
+                system=MCP_SYSTEM,
             )
-            step.attributes["mcp.method.name"] = "tools/list"
-            step.attributes["network.transport"] = "pipe"  # stdio = pipe
-
-            handler.start_step(step)
-
-            start_time = time.time()
+            _enrich_client_op(op, instance)
+            handler.start_mcp_operation(op)
             try:
                 result = await wrapped(*args, **kwargs)
-
-                duration = time.time() - start_time
-                step.attributes["mcp.client.operation.duration_s"] = duration
-
-                # Capture tool names (metadata, not content - always captured)
-                if result:
-                    try:
-                        if hasattr(result, "tools"):
-                            tool_names = [
-                                t.name for t in result.tools if hasattr(t, "name")
-                            ]
-                            step.attributes["mcp.tools.discovered"] = safe_serialize(
-                                tool_names
-                            )
-                    except Exception:
-                        pass
-
-                handler.stop_step(step)
+                handler.stop_mcp_operation(op)
                 return result
-
             except Exception as e:
-                duration = time.time() - start_time
-                step.attributes["mcp.client.operation.duration_s"] = duration
-                step.attributes["error.type"] = type(e).__name__
-                handler.fail_step(step, Error(type=type(e), message=str(e)))
+                op.is_error = True
+                op.error_type = type(e).__name__
+                handler.fail_mcp_operation(op, Error(type=type(e), message=str(e)))
                 raise
 
-        return traced_list_tools
+        return traced_read_resource
+
+    def _client_get_prompt_wrapper(self):
+        """Wrapper for FastMCP Client.get_prompt."""
+        handler = self._handler
+
+        async def traced_get_prompt(wrapped, instance, args, kwargs):
+            prompt_name = str(args[0]) if args else str(kwargs.get("name", ""))
+            transport = detect_transport(instance)
+            op = MCPOperation(
+                target=prompt_name,
+                mcp_method_name="prompts/get",
+                network_transport=transport,
+                gen_ai_prompt_name=prompt_name or None,
+                is_client=True,
+                framework=FASTMCP_FRAMEWORK,
+                system=MCP_SYSTEM,
+            )
+            _enrich_client_op(op, instance)
+            handler.start_mcp_operation(op)
+            try:
+                result = await wrapped(*args, **kwargs)
+                handler.stop_mcp_operation(op)
+                return result
+            except Exception as e:
+                op.is_error = True
+                op.error_type = type(e).__name__
+                handler.fail_mcp_operation(op, Error(type=type(e), message=str(e)))
+                raise
+
+        return traced_get_prompt

@@ -20,7 +20,6 @@ from opentelemetry.semconv._incubating.attributes import (
 )
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
 )
 from opentelemetry.util.genai.handler import (
@@ -29,9 +28,11 @@ from opentelemetry.util.genai.handler import (
 )
 from opentelemetry.util.genai.types import (
     AgentInvocation,
+    EmbeddingInvocation,
     Error,
     InputMessage,
     LLMInvocation,
+    MCPOperation,
     OutputMessage,
     Text,
 )
@@ -76,13 +77,14 @@ class TestMetricsEmission(unittest.TestCase):
         }
         if capture_mode is not None:
             upper_mode = capture_mode.upper()
-            capture_enabled = upper_mode != "NONE"
-            env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] = (
-                "true" if capture_enabled else "false"
-            )
-            env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE] = (
-                upper_mode
-            )
+            if upper_mode == "NONE":
+                env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] = (
+                    "NO_CONTENT"
+                )
+            else:
+                env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] = (
+                    upper_mode
+                )
         with patch.dict(os.environ, env, clear=False):
             _OpenTelemetrySemanticConventionStability._initialized = False
             _OpenTelemetrySemanticConventionStability._initialize()
@@ -335,8 +337,7 @@ class TestMetricsEmission(unittest.TestCase):
         env = {
             **STABILITY_EXPERIMENTAL,
             OTEL_INSTRUMENTATION_GENAI_EMITTERS: "span_metric",
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true",
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE: "SPAN_ONLY",
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "SPAN_ONLY",
         }
         with patch.dict(os.environ, env, clear=False):
             TelemetryHandler._reset_for_testing()
@@ -442,12 +443,8 @@ class TestMetricsEmission(unittest.TestCase):
         }
         if capture_mode is not None:
             upper_mode = capture_mode.upper()
-            capture_enabled = upper_mode != "NONE"
             env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] = (
-                "true" if capture_enabled else "false"
-            )
-            env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE] = (
-                upper_mode
+                upper_mode if upper_mode != "NONE" else "NO_CONTENT"
             )
         with patch.dict(os.environ, env, clear=False):
             _OpenTelemetrySemanticConventionStability._initialized = False
@@ -631,8 +628,7 @@ class TestMCPSessionDurationMetrics(unittest.TestCase):
     def _get_handler(self):
         env = {
             OTEL_INSTRUMENTATION_GENAI_EMITTERS: "span_metric",
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true",
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE: "SPAN",
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "SPAN_ONLY",
         }
         with patch.dict(os.environ, env, clear=False):
             TelemetryHandler._reset_for_testing()
@@ -645,17 +641,18 @@ class TestMCPSessionDurationMetrics(unittest.TestCase):
         """mcp.client.session.duration is recorded when a client MCP session closes normally."""
         handler = self._get_handler()
 
-        session = AgentInvocation(
-            name="mcp.client",
-            agent_type="mcp_client",
+        session = MCPOperation(
+            target="",
+            mcp_method_name="initialize",
+            network_transport="pipe",
+            is_client=True,
+            framework="fastmcp",
             system="mcp",
         )
-        session.attributes["gen_ai.operation.name"] = "mcp.client_session"
-        session.attributes["network.transport"] = "pipe"
 
-        handler.start_agent(session)
+        handler.start_mcp_operation(session)
         time.sleep(0.01)
-        handler.stop_agent(session)
+        handler.stop_mcp_operation(session)
 
         try:
             self.meter_provider.force_flush()
@@ -687,18 +684,18 @@ class TestMCPSessionDurationMetrics(unittest.TestCase):
         """mcp.client.session.duration includes error.type when session fails."""
         handler = self._get_handler()
 
-        session = AgentInvocation(
-            name="mcp.client",
-            agent_type="mcp_client",
+        session = MCPOperation(
+            target="",
+            mcp_method_name="initialize",
+            network_transport="pipe",
+            is_client=True,
+            framework="fastmcp",
             system="mcp",
         )
-        session.attributes["gen_ai.operation.name"] = "mcp.client_session"
-        session.attributes["network.transport"] = "pipe"
-        session.attributes["error.type"] = "ConnectionError"
 
-        handler.start_agent(session)
+        handler.start_mcp_operation(session)
         time.sleep(0.01)
-        handler.fail_agent(
+        handler.fail_mcp_operation(
             session, Error(type=ConnectionError, message="connection lost")
         )
 
@@ -731,17 +728,18 @@ class TestMCPSessionDurationMetrics(unittest.TestCase):
         """mcp.server.session.duration is recorded for server-side MCP sessions."""
         handler = self._get_handler()
 
-        session = AgentInvocation(
-            name="mcp.server",
-            agent_type="mcp_server",
+        session = MCPOperation(
+            target="",
+            mcp_method_name="initialize",
+            network_transport="tcp",
+            is_client=False,
+            framework="fastmcp",
             system="mcp",
         )
-        session.attributes["gen_ai.operation.name"] = "mcp.server_session"
-        session.attributes["network.transport"] = "tcp"
 
-        handler.start_agent(session)
+        handler.start_mcp_operation(session)
         time.sleep(0.01)
-        handler.stop_agent(session)
+        handler.stop_mcp_operation(session)
 
         try:
             self.meter_provider.force_flush()
@@ -781,6 +779,123 @@ class TestMCPSessionDurationMetrics(unittest.TestCase):
         self.assertNotIn("mcp.client.session.duration", names)
         self.assertNotIn("mcp.server.session.duration", names)
         self.assertIn("gen_ai.agent.duration", names)
+
+    # ---- Embedding token metrics tests ----
+
+    def _invoke_embedding(
+        self,
+        generator: str,
+        *,
+        input_tokens: int | None = 10,
+    ) -> EmbeddingInvocation:
+        env = {
+            **STABILITY_EXPERIMENTAL,
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS: generator,
+        }
+        with patch.dict(os.environ, env, clear=False):
+            _OpenTelemetrySemanticConventionStability._initialized = False
+            _OpenTelemetrySemanticConventionStability._initialize()
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.tracer_provider,
+                meter_provider=self.meter_provider,
+            )
+            emb = EmbeddingInvocation(
+                request_model="text-embedding-ada-002",
+                input_texts=["hello world"],
+                provider="openai",
+            )
+            handler.start_embedding(emb)
+            time.sleep(0.01)  # ensure measurable duration
+            emb.input_tokens = input_tokens
+            handler.stop_embedding(emb)
+            try:
+                self.meter_provider.force_flush()
+            except Exception:
+                pass
+            time.sleep(0.005)
+            try:
+                self.metric_reader.collect()
+            except Exception:
+                pass
+        return emb
+
+    def _invoke_embedding_failure(
+        self,
+        generator: str,
+        *,
+        input_tokens: int | None = 10,
+        error_type: type[BaseException] = RuntimeError,
+    ) -> EmbeddingInvocation:
+        env = {
+            **STABILITY_EXPERIMENTAL,
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS: generator,
+        }
+        with patch.dict(os.environ, env, clear=False):
+            _OpenTelemetrySemanticConventionStability._initialized = False
+            _OpenTelemetrySemanticConventionStability._initialize()
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.tracer_provider,
+                meter_provider=self.meter_provider,
+            )
+            emb = EmbeddingInvocation(
+                request_model="text-embedding-ada-002",
+                input_texts=["hello world"],
+                provider="openai",
+            )
+            handler.start_embedding(emb)
+            time.sleep(0.01)
+            emb.input_tokens = input_tokens
+            handler.fail_embedding(
+                emb,
+                Error(message="boom", type=error_type),
+            )
+            try:
+                self.meter_provider.force_flush()
+            except Exception:
+                pass
+            time.sleep(0.005)
+            try:
+                self.metric_reader.collect()
+            except Exception:
+                pass
+        return emb
+
+    def test_embedding_emits_input_token_metric(self):
+        """Embedding should emit token.usage with operation_name=embeddings and only input token type."""
+        self._invoke_embedding("span_metric")
+        metrics_list = self._collect_metrics()
+        names = {m.name for m in metrics_list}
+        self.assertIn("gen_ai.client.token.usage", names)
+        self.assertIn("gen_ai.client.operation.duration", names)
+        # Collect all embedding token datapoints
+        token_types = []
+        for metric in metrics_list:
+            if metric.name != "gen_ai.client.token.usage":
+                continue
+            data = getattr(metric, "data", None)
+            if not data:
+                continue
+            for dp in getattr(data, "data_points", []) or []:
+                attrs = getattr(dp, "attributes", {}) or {}
+                self.assertEqual(
+                    attrs.get("gen_ai.operation.name"),
+                    "embeddings",
+                )
+                token_types.append(attrs.get("gen_ai.token.type"))
+        # Only input tokens, no output/completion
+        self.assertEqual(token_types, ["input"])
+
+    def test_embedding_failure_emits_token_metric(self):
+        """Embedding failure path should also emit token usage metric."""
+        self._invoke_embedding_failure("span_metric", input_tokens=8)
+        metrics_list = self._collect_metrics()
+        names = {m.name for m in metrics_list}
+        self.assertIn("gen_ai.client.token.usage", names)
+        self.assertIn("gen_ai.client.operation.duration", names)
 
 
 if __name__ == "__main__":  # pragma: no cover

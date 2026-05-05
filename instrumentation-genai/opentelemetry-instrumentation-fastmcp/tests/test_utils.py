@@ -21,9 +21,9 @@ from opentelemetry.instrumentation.fastmcp.utils import (
     safe_serialize,
     truncate_if_needed,
     should_capture_content,
-    is_instrumentation_enabled,
     extract_tool_info,
     extract_result_content,
+    detect_transport,
 )
 
 
@@ -144,21 +144,6 @@ class TestShouldCaptureContent:
                 assert should_capture_content() is False
 
 
-class TestIsInstrumentationEnabled:
-    """Tests for is_instrumentation_enabled function."""
-
-    def test_default_true(self):
-        """Test default is True (enabled)."""
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("OTEL_INSTRUMENTATION_GENAI_ENABLE", None)
-            assert is_instrumentation_enabled() is True
-
-    def test_disabled(self):
-        """Test disabling instrumentation."""
-        with patch.dict(os.environ, {"OTEL_INSTRUMENTATION_GENAI_ENABLE": "false"}):
-            assert is_instrumentation_enabled() is False
-
-
 class TestExtractToolInfo:
     """Tests for extract_tool_info function."""
 
@@ -233,3 +218,72 @@ class TestExtractResultContent:
         result = extract_result_content(MockResult())
         assert result is not None
         assert "item_value" in result
+
+
+class TestDetectTransport:
+    """Tests for detect_transport function."""
+
+    def test_plain_object_defaults_to_pipe(self):
+        """Objects without transport attributes fall back to pipe."""
+        assert detect_transport(object()) == "pipe"
+
+    def test_sse_transport_attribute(self):
+        """Instance with an SSE-like transport attribute returns tcp."""
+
+        class SSETransport:
+            pass
+
+        class ClientWithSSE:
+            transport = SSETransport()
+
+        ClientWithSSE.transport.__class__.__name__ = "SSETransport"
+        assert detect_transport(ClientWithSSE()) == "tcp"
+
+    def test_streamable_transport_attribute(self):
+        """Instance with a streamable-HTTP transport returns tcp."""
+
+        class StreamableHTTPTransport:
+            pass
+
+        class ClientWithStreamable:
+            transport = StreamableHTTPTransport()
+
+        assert detect_transport(ClientWithStreamable()) == "tcp"
+
+    def test_stdio_transport_attribute(self):
+        """Instance with a stdio transport returns pipe."""
+
+        class StdioTransport:
+            pass
+
+        class ClientWithStdio:
+            transport = StdioTransport()
+
+        assert detect_transport(ClientWithStdio()) == "pipe"
+
+    def test_falls_back_to_fastmcp_settings(self):
+        """When instance has no transport attr, reads fastmcp.settings."""
+        with patch(
+            "opentelemetry.instrumentation.fastmcp.utils.import_module"
+        ) as mock_import:
+            mock_settings = type("Settings", (), {"transport": "sse"})()
+            mock_import.return_value = mock_settings
+            assert detect_transport(object()) == "tcp"
+
+    def test_fastmcp_settings_http(self):
+        """fastmcp.settings.transport='http' detected as tcp."""
+        with patch(
+            "opentelemetry.instrumentation.fastmcp.utils.import_module"
+        ) as mock_import:
+            mock_settings = type("Settings", (), {"transport": "http"})()
+            mock_import.return_value = mock_settings
+            assert detect_transport(object()) == "tcp"
+
+    def test_fastmcp_settings_stdio(self):
+        """fastmcp.settings.transport='stdio' stays as pipe."""
+        with patch(
+            "opentelemetry.instrumentation.fastmcp.utils.import_module"
+        ) as mock_import:
+            mock_settings = type("Settings", (), {"transport": "stdio"})()
+            mock_import.return_value = mock_settings
+            assert detect_transport(object()) == "pipe"

@@ -5,14 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.2]
+## [Unreleased]
+
+### Changed
+
+- **Always populate tool arguments and tool result on Python objects** — `tool_call.arguments` and `tool_call.tool_result` are now always set regardless of `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. The emitter layer controls what reaches telemetry, enabling evaluators to access full content even in `NO_CONTENT` mode.
+
+## [0.2.1]
+
+### Changed (Breaking)
+
+- **`initialize` MCPOperation replaces `AgentInvocation` as root span** — Both client and server now use `MCPOperation(mcp_method_name="initialize")` as the session-spanning root span instead of `AgentInvocation`. Traces will show `initialize` as the root span for standalone FastMCP apps, and correctly nest under outer GenAI spans (e.g. LangChain, OpenAI) when FastMCP is used as a sub-component.
+
+### Changed
+
+- **MCP session duration metrics via `initialize` span** — `mcp.client.session.duration` and `mcp.server.session.duration` are now emitted when the `initialize` MCPOperation ends, replacing the previous `AgentInvocation`-based `_record_mcp_session_metrics` path in `util-genai`. Session metrics now carry the same semconv attributes as the `initialize` span.
+- **Client `initialize` span enrichment** — After a successful connect the `initialize` span is enriched with `mcp.protocol.version` (from `initialize_result.protocolVersion`) and `sdot.mcp.server_name` (from `initialize_result.serverInfo.name`).
+- **`_active_sessions` dict type** — `ClientInstrumentor._active_sessions` is now `dict[int, MCPOperation]` (was `dict[int, AgentInvocation]`).
+
+### Removed
+
+- `AgentInvocation` import and usage from `client_instrumentor.py` and `server_instrumentor.py`.
+- `Workflow` import from `server_instrumentor.py` (was unused after the root-span refactor).
+
+## [0.2.0]
 
 ### Added
+- **FastMCP 3.x support** — **Breaking**: targets `fastmcp >= 3.0.0, < 4` (previously `>= 2.0.0, <= 2.14.7`).
 - **Server session lifecycle tracking** — `server_instrumentor` now wraps `mcp.server.lowlevel.Server.run` with an `AgentInvocation(agent_type="mcp_server")` to track server session duration, enabling `mcp.server.session.duration` metric emission via `MetricsEmitter`.
+- **`resources/read` and `prompts/get` instrumentation** — Server and client-side hooks for `FastMCP.read_resource` / `Client.read_resource` and `FastMCP.get_prompt` / `Client.get_prompt`. Produces `MCPOperation` spans with `{mcp.method.name} {target}` naming.
+- **Transport context bridge** — `MCPRequestContext` ContextVar populated by the transport instrumentor on the server side, allowing the server instrumentor to read `jsonrpc.request.id`, `network.transport`, etc.
+- **Transport detection** — Client automatically detects `pipe` vs `tcp` transport from `Client.transport` type.
+- **Baggage propagation** — Transport instrumentor now extracts W3C `baggage` header alongside `traceparent`/`tracestate`.
+
+### Changed
+- **`list_tools` uses `MCPOperation` instead of `Step`** — Client `list_tools` now produces a `tools/list` span via `MCPOperation` with proper MCP semconv naming and `SpanKind.CLIENT`, instead of the previous `Step` type.
+- **Server hooks on `FastMCP.call_tool`** — Tool call hook targets `FastMCP.call_tool` directly with re-entrant guard for FastMCP 3.x middleware recursion.
+- **Renamed `mcp_server_name` → `sdot_mcp_server_name`** — **Breaking**: callers using `mcp_server_name=` on `MCPToolCall` must update to `sdot_mcp_server_name=`.
 
 ### Fixed
 - **MCP session attributes for duration metrics** — `client_instrumentor` now sets `network.transport` and `error.type` on the `AgentInvocation` attributes dict so that `MetricsEmitter` can record `mcp.client.session.duration` with proper semconv attributes.
 - **MCP span naming aligned with OTel MCP semantic conventions** — Tool call spans now use `tools/call {tool_name}` format with `SpanKind.CLIENT` (client-side) or `SpanKind.SERVER` (server-side), matching the [OTel MCP semconv spec](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/). Previously used `execute_tool {tool_name}` with `SpanKind.INTERNAL`.
+
+## [0.1.2]
+
+### Changed
+- Pinned compatibility to `fastmcp >= 2.0.0, <= 2.14.7` and `splunk-otel-util-genai <= 0.1.8` to avoid runtime incompatibilities introduced by newer upstream releases.
 
 ## [0.1.1] - 2026-01-27
 
@@ -34,7 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Event generation for tool inputs and outputs when content capture is enabled
 - Integration with `splunk-otel-util-genai` for standardized GenAI telemetry
 - Environment variable configuration support:
-  - `OTEL_INSTRUMENTATION_GENAI_ENABLE` - Enable/disable instrumentation
   - `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` - Capture tool arguments and results
   - `OTEL_INSTRUMENTATION_GENAI_EMITTERS` - Select emitters (span, metric, event)
 - Programmatic and auto-instrumentation support

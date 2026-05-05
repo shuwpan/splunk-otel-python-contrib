@@ -103,7 +103,6 @@ my_evaluator = "my_package:register"
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OTEL_INSTRUMENTATION_GENAI_ENABLE` | Enable/disable instrumentation | `true` |
 | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | Capture message content | `false` |
 | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE` | `SPAN`, `EVENT`, `SPAN_AND_EVENT` | `SPAN` |
 | `OTEL_INSTRUMENTATION_GENAI_EMITTERS` | Emitter selection | `span` |
@@ -140,6 +139,7 @@ For detailed information, see these files in the repository:
 | [README.packages.architecture.md](README.packages.architecture.md) | Package architecture, interfaces, lifecycle diagrams |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution guidelines, PR process |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Detailed development setup for macOS |
+| [docs/semconv-reference.md](docs/semconv-reference.md) | Complete GenAI semantic conventions reference (SDOT vs upstream) |
 
 ## Common Tasks
 
@@ -213,6 +213,16 @@ VS Code launch configurations are in `.vscode/launch.json` for debugging example
 - Tests are required for all new features
 - Update `CHANGELOG.md` to document changes
 - Update `version.py`, only update the minor version unless backward-incompatible changes are introduced. Always communicate with human when the breaking changes are introduced.
+
+## Semantic Convention Reference Maintenance
+
+When making changes to semantic conventions in this repo (e.g., adding/removing/renaming attributes in `attributes.py`, `types.py`, or `semconv_ai.py`, changing span/metric/event schemas, or updating emitter behavior), **you must update [docs/semconv-reference.md](docs/semconv-reference.md)** to reflect those changes. This includes:
+
+- New or removed attributes in the attribute reference tables
+- Changes to span types, metrics, or events
+- Changes to propagation behavior (agent name, conversation ID, association properties)
+- Updates to the SDOT vs upstream comparison
+- Changes to legacy attribute mappings
 
 ## Notes for AI Agents
 

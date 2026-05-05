@@ -1061,24 +1061,24 @@ class GenAISemanticProcessor(TracingProcessor):
         return messages
 
     def _build_content_payload(self, span: Span[Any]) -> ContentPayload:
-        """Normalize content from span data for attribute/event capture."""
+        """Normalize content from span data for attribute/event capture.
+
+        Always populates messages in the payload so that downstream consumers
+        (e.g. evaluators) have access to message data via the invocation
+        objects regardless of the telemetry capture mode.  The emitter layer
+        controls what actually gets written to spans/events.
+        """
         payload = ContentPayload()
         span_data = getattr(span, "span_data", None)
         if span_data is None or not self.include_sensitive_data:
             return payload
 
-        capture_messages = self._capture_messages and (
-            self._content_mode.capture_in_span
-            or self._content_mode.capture_in_event
-        )
-        capture_system = self._capture_system_instructions and (
-            self._content_mode.capture_in_span
-            or self._content_mode.capture_in_event
-        )
-        capture_tools = self._content_mode.capture_in_span or (
-            self._content_mode.capture_in_event
-            and _is_instance_of(span_data, FunctionSpanData)
-        )
+        # Always capture messages for invocation population (evals need them).
+        # The telemetry capture mode only controls span/event emission, not
+        # what goes on the Python objects.
+        capture_messages = True
+        capture_system = self._capture_system_instructions
+        capture_tools = True
 
         if _is_instance_of(span_data, GenerationSpanData):
             span_input = getattr(span_data, "input", None)
@@ -1940,6 +1940,57 @@ class GenAISemanticProcessor(TracingProcessor):
                         )
                     if output_tokens is not None:
                         invocation.output_tokens = output_tokens
+
+            # Extract request parameters from model_config
+            span_data = span.span_data
+            model_config = getattr(span_data, "model_config", None)
+            if model_config:
+                # Temperature
+                if hasattr(model_config, "get"):
+                    temp = model_config.get("temperature")
+                else:
+                    temp = getattr(model_config, "temperature", None)
+                if temp is not None:
+                    invocation.request_temperature = temp
+
+                # Max tokens
+                if hasattr(model_config, "get"):
+                    max_tokens = model_config.get("max_tokens")
+                else:
+                    max_tokens = getattr(model_config, "max_tokens", None)
+                if max_tokens is not None:
+                    invocation.request_max_tokens = max_tokens
+
+                # Tool definitions (gated by _capture_tool_definitions)
+                if self._capture_tool_definitions:
+                    if hasattr(model_config, "get"):
+                        tools = model_config.get("tools") or model_config.get(
+                            "functions"
+                        )
+                    else:
+                        tools = getattr(
+                            model_config, "tools", None
+                        ) or getattr(model_config, "functions", None)
+                    if tools:
+                        invocation.tool_definitions = safe_json_dumps(tools)
+
+            # Extract finish_reasons from span_data.output
+            span_output = getattr(span_data, "output", None)
+            if span_output:
+                finish_reasons: list[str] = []
+                for part in span_output:
+                    if isinstance(part, dict):
+                        fr = part.get("finish_reason") or part.get(
+                            "stop_reason"
+                        )
+                    else:
+                        fr = getattr(part, "finish_reason", None)
+                    if fr:
+                        finish_reasons.append(
+                            fr if isinstance(fr, str) else str(fr)
+                        )
+                if finish_reasons:
+                    invocation.response_finish_reasons = finish_reasons
 
             self._handler.stop_llm(invocation)
         except Exception as e:
