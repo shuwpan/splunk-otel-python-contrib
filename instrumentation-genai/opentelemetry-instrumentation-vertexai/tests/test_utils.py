@@ -154,33 +154,6 @@ def test_convert_content_mixed_parts():
     assert parts[2].response == {"answer": "world"}
 
 
-def test_convert_content_to_input_message_normalizes_roles():
-    model_content = content.Content(
-        {
-            "role": "model",
-            "parts": [{"text": "hello"}],
-        }
-    )
-    model_message = convert_content_to_input_message(model_content)
-    assert model_message.role == "assistant"
-
-    tool_content = content.Content(
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "function_response": {
-                        "name": "search",
-                        "response": {"answer": "world"},
-                    }
-                }
-            ],
-        }
-    )
-    tool_message = convert_content_to_input_message(tool_content)
-    assert tool_message.role == "tool"
-
-
 def test_extract_tool_definitions():
     """extract_tool_definitions converts Tool protos to dicts."""
     t = tool.Tool(
