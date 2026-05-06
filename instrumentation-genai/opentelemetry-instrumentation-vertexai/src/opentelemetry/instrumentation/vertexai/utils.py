@@ -34,7 +34,6 @@ from opentelemetry.semconv._incubating.attributes import (
 )
 from opentelemetry.semconv.attributes import server_attributes
 from opentelemetry.util.genai.types import (
-    ContentCapturingMode,
     FinishReason,
     InputMessage,
     MessagePart,
@@ -43,7 +42,6 @@ from opentelemetry.util.genai.types import (
     ToolCall,
     ToolCallResponse,
 )
-from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.types import AttributeValue
 
 if TYPE_CHECKING:
@@ -171,11 +169,6 @@ def _get_model_name(model: str) -> str:
     return _MODEL_STRIP_RE.sub("", model)
 
 
-def is_content_enabled() -> bool:
-    """Check if content capturing is enabled via environment variable."""
-    return get_content_capturing_mode() != ContentCapturingMode.NO_CONTENT
-
-
 def convert_content_to_message_parts(
     content: content.Content | content_v1beta1.Content,
 ) -> list[MessagePart]:
@@ -234,15 +227,9 @@ def convert_content_to_input_message(
 
 def convert_candidate_to_output_message(
     candidate: content.Candidate | content_v1beta1.Candidate,
-    *,
-    capture_content: bool,
 ) -> OutputMessage:
     """Convert a Vertex AI candidate to a normalized util-genai OutputMessage."""
-    parts = (
-        convert_content_to_message_parts(candidate.content)
-        if capture_content
-        else []
-    )
+    parts = convert_content_to_message_parts(candidate.content)
     return OutputMessage(
         role=_normalize_content_role(
             getattr(candidate.content, "role", None), parts

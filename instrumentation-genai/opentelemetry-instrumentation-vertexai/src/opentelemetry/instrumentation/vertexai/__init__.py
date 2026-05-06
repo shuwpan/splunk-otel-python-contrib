@@ -54,7 +54,6 @@ from opentelemetry.instrumentation.vertexai.patch import (
     agenerate_content,
     generate_content,
 )
-from opentelemetry.instrumentation.vertexai.utils import is_content_enabled
 from opentelemetry.util.genai.handler import get_telemetry_handler
 
 
@@ -78,8 +77,6 @@ class VertexAIInstrumentor(BaseInstrumentor):
             logger_provider=logger_provider,
         )
 
-        capture_content = is_content_enabled()
-
         # This import is very slow, do it lazily in case instrument() is not called
         # pylint: disable=import-outside-toplevel
         from google.cloud.aiplatform_v1.services.prediction_service import (  # noqa: PLC0415
@@ -93,8 +90,8 @@ class VertexAIInstrumentor(BaseInstrumentor):
             client as client_v1beta1,
         )
 
-        sync_wrapper = generate_content(capture_content, handler)
-        async_wrapper = agenerate_content(capture_content, handler)
+        sync_wrapper = generate_content(handler)
+        async_wrapper = agenerate_content(handler)
 
         for client_class in (
             client.PredictionServiceClient,
