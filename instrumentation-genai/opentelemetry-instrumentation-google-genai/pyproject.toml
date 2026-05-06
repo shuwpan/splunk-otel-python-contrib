@@ -17,7 +17,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "opentelemetry-instrumentation-google-genai"
+name = "splunk-otel-instrumentation-google-genai"
 dynamic = ["version"]
 description = "OpenTelemetry"
 readme = "README.rst"
