@@ -1,4 +1,5 @@
 # pylint: skip-file
+# ruff: noqa: E402, I001
 """VertexAI Single-Agent Example.
 
 Demonstrates a ReAct-style agentic loop using the native VertexAI SDK
@@ -6,7 +7,7 @@ Demonstrates a ReAct-style agentic loop using the native VertexAI SDK
 via VertexAIInstrumentor.
 
 Run modes:
-1. Default (no CLI args): queries "What is the weather in San Francisco?" and exits.    `-  h
+1. Default (no CLI args): queries "What is the weather in San Francisco?" and exits.
 
 2. CLI mode: python main.py --city "Paris"
 
@@ -22,10 +23,13 @@ Optional:
 import argparse
 import logging
 import os
+import time
 
 import requests
 
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s"
+)
 import vertexai
 from dotenv import load_dotenv
 from vertexai.generative_models import (
@@ -64,7 +68,10 @@ os.environ.setdefault(
     "OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental"
 )
 os.environ.setdefault(
-    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_AND_EVENT"
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true"
+)
+os.environ.setdefault(
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE", "SPAN_AND_EVENT"
 )
 
 # --- Configure tracing ---
@@ -236,11 +243,11 @@ def main():
     print("Evaluations done, flushing telemetry...")
 
     # Give emitters a moment to flush evaluation results
-    import time
     time.sleep(5)
 
-    # Flush spans and logs before exit
+    # Flush all telemetry before exit
     trace.get_tracer_provider().shutdown()
+    metrics.get_meter_provider().shutdown()
     _logs.get_logger_provider().shutdown()
     print("Shutdown complete.")
 
