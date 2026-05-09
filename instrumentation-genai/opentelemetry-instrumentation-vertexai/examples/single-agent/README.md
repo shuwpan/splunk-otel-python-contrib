@@ -60,30 +60,39 @@ python main.py                       # default: San Francisco
 python main.py --city "Tokyo"        # custom city
 ```
 
-## Expected Trace Structure
+## Sample Telemetry
 
-A single run produces a trace with the following span hierarchy:
+Sample output from a single run with `OTEL_INSTRUMENTATION_GENAI_EMITTERS=span_metric_event`.
+
+### Traces
 
 ```
-chat gemini-2.5-flash-lite                    ← initial user query
-├── get_weather                               ← tool call execution (by application)
-└── chat gemini-2.5-flash-lite                ← follow-up with tool result → final answer
+Service Name                      Latency   Span Name
+opentelemetry-python-vertexai     1.09s     chat gemini-2.5-flash-lite   ← initial query + tool call
+opentelemetry-python-vertexai     528.48ms  chat gemini-2.5-flash-lite   ← tool result → final answer
 ```
 
-Each `chat` span includes:
+Span attributes: `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.response.model`,
+`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`,
+`server.address`, `server.port`.
 
-- **Attributes**: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.response.finish_reasons`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
-- **Events** (when `SPAN_AND_EVENT` mode): `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.choice`
-- **Tool call attributes**: `gen_ai.request.tool_definitions` on the first `chat` span
-
-When tool calling occurs, the first `chat` span captures the model's function-call response (`get_weather`), and the second `chat` span captures the function response fed back and the final text answer.
-
-## Expected Metrics
+### Metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `gen_ai.client.token.usage` | Histogram | Token counts per request (input/output) |
+| `gen_ai.client.token.usage` | Histogram | Input/output token counts per request |
 | `gen_ai.client.operation.duration` | Histogram | LLM call latency in seconds |
+
+Dimensions: `gen_ai.token.type`, `gen_ai.request.model`, `gen_ai.response.model`,
+`gen_ai.operation.name`, `gen_ai.framework`, `gen_ai.provider.name`.
+
+### Log Events
+
+When `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE=SPAN_AND_EVENT`:
+
+- **Event**: `gen_ai.client.inference.operation.details`
+- **Body**: full `gen_ai.input.messages` and `gen_ai.output.messages` as JSON
+- Correlated to parent span via `trace_id` / `span_id`
 
 ## Project Structure
 
