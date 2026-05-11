@@ -163,7 +163,7 @@ def test_tool_events(
     )
     assert "gen_ai.request.function.0.parameters" in attrs
 
-    # Content on span: user text, model function_call, user tool responses, model text response
+    # Content on span: user text, assistant function_call, tool responses, assistant text response
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
     assert len(input_msgs) == 3
@@ -175,7 +175,7 @@ def test_tool_events(
             "content": "Get weather details in New Delhi and San Francisco?",
         }
     ]
-    # Second message: model with function_call parts now mapped to ToolCall
+    # Second message: assistant with function_call parts now mapped to ToolCall
     assert input_msgs[1]["role"] == "assistant"
     assert len(input_msgs[1]["parts"]) == 2
     assert input_msgs[1]["parts"][0]["type"] == "tool_call"
@@ -186,7 +186,7 @@ def test_tool_events(
     assert input_msgs[1]["parts"][1]["arguments"] == {
         "location": "San Francisco"
     }
-    # Third message: user with tool call responses
+    # Third message: tool with tool call responses
     assert input_msgs[2]["role"] == "tool"
     assert len(input_msgs[2]["parts"]) == 2
     assert input_msgs[2]["parts"][0]["type"] == "tool_call_response"

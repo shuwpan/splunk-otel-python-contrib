@@ -71,6 +71,33 @@ def test_map_finish_reason():
             assert _map_finish_reason(finish_reason) == expect
 
 
+def test_convert_content_to_input_message_normalizes_roles():
+    model_content = content.Content(
+        {
+            "role": "model",
+            "parts": [{"text": "hello"}],
+        }
+    )
+    model_message = convert_content_to_input_message(model_content)
+    assert model_message.role == "assistant"
+
+    tool_content = content.Content(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "function_response": {
+                        "name": "search",
+                        "response": {"answer": "world"},
+                    }
+                }
+            ],
+        }
+    )
+    tool_message = convert_content_to_input_message(tool_content)
+    assert tool_message.role == "tool"
+
+
 def test_convert_content_function_call():
     """function_call parts are mapped to ToolCall message parts."""
     c = content.Content(
@@ -125,36 +152,6 @@ def test_convert_content_mixed_parts():
     assert parts[1].name == "search"
     assert parts[2].type == "tool_call_response"
     assert parts[2].response == {"answer": "world"}
-
-
-def test_convert_content_to_input_message_normalizes_roles():
-    """Vertex AI provider roles are normalized to OTel GenAI roles."""
-    model_message = convert_content_to_input_message(
-        content.Content(
-            {
-                "role": "model",
-                "parts": [{"text": "hello"}],
-            }
-        )
-    )
-    assert model_message.role == "assistant"
-
-    tool_message = convert_content_to_input_message(
-        content.Content(
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "function_response": {
-                            "name": "search",
-                            "response": {"answer": "world"},
-                        }
-                    }
-                ],
-            }
-        )
-    )
-    assert tool_message.role == "tool"
 
 
 def test_extract_tool_definitions():
