@@ -81,10 +81,6 @@ spec:
                     secretKeyRef:
                       name: circuit-oauth-secrets
                       key: client-secret
-                - name: DEEPEVAL_LLM_TOKEN_URL
-                  value: "https://id.cisco.com/oauth2/default/v1/token"
-                - name: DEEPEVAL_LLM_CLIENT_APP_NAME
-                  value: "egai-prd-other-020027861-newcontent-1770913440554"
                 # GCP / Vertex AI configuration
                 - name: GOOGLE_CLOUD_PROJECT
                   value: "gcp-o11yinframon-nprd-81065"
