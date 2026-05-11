@@ -26,6 +26,7 @@ from opentelemetry.instrumentation.vertexai.utils import (
     convert_candidate_to_output_message,
     convert_content_to_input_message,
     convert_content_to_message_parts,
+    extract_tool_definitions,
     get_genai_request_attributes,
     get_server_attributes,
 )
@@ -46,6 +47,7 @@ from opentelemetry.util.genai.types import (
     LLMInvocation,
     OutputMessage,
 )
+from opentelemetry.util.genai.utils import should_capture_tool_definitions
 
 if TYPE_CHECKING:
     from google.cloud.aiplatform_v1.types import (
@@ -100,30 +102,37 @@ def _extract_params(
 def _build_invocation(
     params: GenerateContentParams,
     api_endpoint: str,
-    capture_content: bool,
 ) -> LLMInvocation:
-    """Build an LLMInvocation from Vertex AI request parameters."""
+    """Build an LLMInvocation from Vertex AI request parameters.
+
+    Always populates full content on the Python objects so that downstream
+    consumers (e.g. evaluators) have access to message data regardless of
+    the telemetry capture mode.  The emitter layer controls what actually
+    gets written to spans/events.
+    """
     request_attributes = get_genai_request_attributes(params)
     server_attrs = get_server_attributes(api_endpoint)
 
     # Build input messages
     input_messages: list[InputMessage] = []
-    if capture_content:
-        # Vertex AI uses a dedicated system_instruction field (equivalent to OpenAI's
-        # role="system") but its Content proto only supports role="user"|"model".
-        # We set role="system" so the emitter routes it to gen_ai.system_instructions.
-        if params.system_instruction:
-            input_messages.append(
-                InputMessage(
-                    role="system",
-                    parts=convert_content_to_message_parts(
-                        params.system_instruction
-                    ),
-                )
+    # Vertex AI uses a dedicated system_instruction field (equivalent to OpenAI's
+    # role="system") but its Content proto only supports role="user"|"model".
+    # We set role="system" so the emitter routes it to gen_ai.system_instructions.
+    if params.system_instruction:
+        input_messages.append(
+            InputMessage(
+                role="system",
+                parts=convert_content_to_message_parts(
+                    params.system_instruction
+                ),
             )
-        if params.contents:
-            for c in params.contents:
-                input_messages.append(convert_content_to_input_message(c))
+        )
+    if params.contents:
+        for c in params.contents:
+            input_messages.append(convert_content_to_input_message(c))
+
+    # Tool definitions are request metadata, not message content.
+    request_functions = extract_tool_definitions(params.tools)
 
     invocation = LLMInvocation(
         request_model=request_attributes.get(
@@ -157,21 +166,21 @@ def _build_invocation(
         request_seed=request_attributes.get(
             GenAIAttributes.GEN_AI_REQUEST_SEED
         ),
+        request_top_k=request_attributes.get(
+            GenAIAttributes.GEN_AI_REQUEST_TOP_K
+        ),
+        request_choice_count=request_attributes.get(
+            GenAIAttributes.GEN_AI_REQUEST_CHOICE_COUNT
+        ),
+        output_type=request_attributes.get(GenAIAttributes.GEN_AI_OUTPUT_TYPE),
+        request_functions=request_functions,
     )
 
-    # Propagate extra attributes that don't map to LLMInvocation fields
-    if GenAIAttributes.GEN_AI_OUTPUT_TYPE in request_attributes:
-        invocation.attributes[GenAIAttributes.GEN_AI_OUTPUT_TYPE] = (
-            request_attributes[GenAIAttributes.GEN_AI_OUTPUT_TYPE]
-        )
-
-    if capture_content and params.tools:
+    if params.tools and should_capture_tool_definitions():
         from google.protobuf import json_format as _jf
 
         tool_defs = [_jf.MessageToDict(t._pb) for t in params.tools]  # type: ignore[union-attr]
-        invocation.attributes[GenAIAttributes.GEN_AI_TOOL_DEFINITIONS] = (
-            json.dumps(tool_defs)
-        )
+        invocation.tool_definitions = json.dumps(tool_defs)
 
     return invocation
 
@@ -180,7 +189,6 @@ def _apply_response_to_invocation(
     invocation: LLMInvocation,
     response: prediction_service.GenerateContentResponse
     | prediction_service_v1beta1.GenerateContentResponse,
-    capture_content: bool,
 ) -> None:
     """Apply response data to an existing LLMInvocation."""
     if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -196,10 +204,7 @@ def _apply_response_to_invocation(
     finish_reasons = []
     output_messages: list[OutputMessage] = []
     for candidate in response.candidates:
-        output_message = convert_candidate_to_output_message(
-            candidate,
-            capture_content=capture_content,
-        )
+        output_message = convert_candidate_to_output_message(candidate)
         fr = output_message.finish_reason
         finish_reasons.append(fr)
         output_messages.append(output_message)
@@ -208,80 +213,58 @@ def _apply_response_to_invocation(
     invocation.output_messages = output_messages
 
 
-def generate_content(capture_content: bool, handler: TelemetryHandler):
+def generate_content(handler: TelemetryHandler):
     """Wrap the sync `generate_content` method to trace it."""
 
     def traced_method(wrapped, instance, args, kwargs):
         params = _extract_params(*args, **kwargs)
         api_endpoint: str = instance.api_endpoint  # type: ignore[reportUnknownMemberType]
-        invocation = _build_invocation(params, api_endpoint, capture_content)
+        invocation = _build_invocation(params, api_endpoint)
         handler.start_llm(invocation)
 
         try:
             response = wrapped(*args, **kwargs)
         except Exception as error:
-            try:  # pragma: no cover - defensive
-                handler.fail_llm(
-                    invocation,
-                    InvocationError(message=str(error), type=type(error)),
-                )
-            except Exception:
-                pass
+            handler.fail_llm(
+                invocation,
+                InvocationError(message=str(error), type=type(error)),
+            )
             raise
 
         try:
-            _apply_response_to_invocation(
-                invocation, response, capture_content
-            )
+            _apply_response_to_invocation(invocation, response)
             handler.stop_llm(invocation)
-        except Exception as error:  # pragma: no cover - defensive
-            try:
-                handler.fail_llm(
-                    invocation,
-                    InvocationError(message=str(error), type=type(error)),
-                )
-            except Exception:
-                pass
+        except Exception:  # pragma: no cover - defensive
+            pass
 
         return response
 
     return traced_method
 
 
-def agenerate_content(capture_content: bool, handler: TelemetryHandler):
+def agenerate_content(handler: TelemetryHandler):
     """Wrap the async `generate_content` method to trace it."""
 
     async def traced_method(wrapped, instance, args, kwargs):
         params = _extract_params(*args, **kwargs)
         api_endpoint: str = instance.api_endpoint  # type: ignore[reportUnknownMemberType]
-        invocation = _build_invocation(params, api_endpoint, capture_content)
+        invocation = _build_invocation(params, api_endpoint)
         handler.start_llm(invocation)
 
         try:
             response = await wrapped(*args, **kwargs)
         except Exception as error:
-            try:  # pragma: no cover - defensive
-                handler.fail_llm(
-                    invocation,
-                    InvocationError(message=str(error), type=type(error)),
-                )
-            except Exception:
-                pass
+            handler.fail_llm(
+                invocation,
+                InvocationError(message=str(error), type=type(error)),
+            )
             raise
 
         try:
-            _apply_response_to_invocation(
-                invocation, response, capture_content
-            )
+            _apply_response_to_invocation(invocation, response)
             handler.stop_llm(invocation)
-        except Exception as error:  # pragma: no cover - defensive
-            try:
-                handler.fail_llm(
-                    invocation,
-                    InvocationError(message=str(error), type=type(error)),
-                )
-            except Exception:
-                pass
+        except Exception:  # pragma: no cover - defensive
+            pass
 
         return response
 

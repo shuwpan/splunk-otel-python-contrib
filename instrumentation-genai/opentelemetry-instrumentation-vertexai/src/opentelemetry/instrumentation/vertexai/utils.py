@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
+    Any,
     Mapping,
     Sequence,
 )
@@ -33,15 +34,14 @@ from opentelemetry.semconv._incubating.attributes import (
 )
 from opentelemetry.semconv.attributes import server_attributes
 from opentelemetry.util.genai.types import (
-    ContentCapturingMode,
     FinishReason,
     InputMessage,
     MessagePart,
     OutputMessage,
     Text,
+    ToolCall,
     ToolCallResponse,
 )
-from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.types import AttributeValue
 
 if TYPE_CHECKING:
@@ -116,10 +116,12 @@ def get_genai_request_attributes(  # pylint: disable=too-many-branches
             generation_config.temperature
         )
     if "top_p" in generation_config:
-        # There is also a top_k parameter ( The maximum number of tokens to consider when sampling.),
-        # but no semconv yet exists for it.
         attributes[GenAIAttributes.GEN_AI_REQUEST_TOP_P] = (
             generation_config.top_p
+        )
+    if "top_k" in generation_config:
+        attributes[GenAIAttributes.GEN_AI_REQUEST_TOP_K] = (
+            generation_config.top_k
         )
     if "max_output_tokens" in generation_config:
         attributes[GenAIAttributes.GEN_AI_REQUEST_MAX_TOKENS] = (
@@ -167,19 +169,17 @@ def _get_model_name(model: str) -> str:
     return _MODEL_STRIP_RE.sub("", model)
 
 
-def is_content_enabled() -> bool:
-    """Check if content capturing is enabled via environment variable."""
-    return get_content_capturing_mode() != ContentCapturingMode.NO_CONTENT
-
-
 def convert_content_to_message_parts(
     content: content.Content | content_v1beta1.Content,
 ) -> list[MessagePart]:
     """Convert Vertex AI Content proto to a list of util-genai MessagePart objects.
 
-    Only Text and ToolCallResponse parts are supported in this version.
-    Unsupported part types (inline_data, file_data, function_call) are
-    skipped until the corresponding util-genai types are available (HYBIM-604).
+    Maps Vertex AI part types to util-genai equivalents:
+      function_call → ToolCall, function_response → ToolCallResponse, text → Text.
+    Unsupported types (inline_data, file_data) are skipped (HYBIM-604).
+
+    Note: ``._pb`` is used to access the underlying protobuf message because
+    proto-plus wrappers don't support direct ``MessageToDict`` conversion.
     """
     parts: list[MessagePart] = []
     for idx, part in enumerate(content.parts):
@@ -187,14 +187,19 @@ def convert_content_to_message_parts(
             part = part.function_response
             parts.append(
                 ToolCallResponse(
-                    id=f"{part.name}_{idx}",
+                    id=f"{part.name}_{idx}",  # synthetic (Vertex AI has no call id)
                     response=json_format.MessageToDict(part._pb.response),  # type: ignore[reportUnknownMemberType]
                 )
             )
         elif "function_call" in part:
-            # ToolCallRequest not yet in util-genai (HYBIM-604) — skip
-            logging.debug(
-                "function_call part skipped (ToolCallRequest not yet supported)"
+            fc = part.function_call
+            args = json_format.MessageToDict(fc._pb.args) if fc.args else {}  # type: ignore[reportUnknownMemberType]
+            parts.append(
+                ToolCall(
+                    name=fc.name,
+                    arguments=args,
+                    id=f"{fc.name}_{idx}",  # synthetic (Vertex AI has no call id)
+                )
             )
         elif "text" in part:
             parts.append(Text(content=part.text))
@@ -222,15 +227,9 @@ def convert_content_to_input_message(
 
 def convert_candidate_to_output_message(
     candidate: content.Candidate | content_v1beta1.Candidate,
-    *,
-    capture_content: bool,
 ) -> OutputMessage:
     """Convert a Vertex AI candidate to a normalized util-genai OutputMessage."""
-    parts = (
-        convert_content_to_message_parts(candidate.content)
-        if capture_content
-        else []
-    )
+    parts = convert_content_to_message_parts(candidate.content)
     return OutputMessage(
         role=_normalize_content_role(
             getattr(candidate.content, "role", None), parts
@@ -276,3 +275,31 @@ def _map_finish_reason(
 
     # If there is no 1:1 mapping to an OTel preferred enum value, use the exact vertex reason
     return finish_reason.name
+
+
+def extract_tool_definitions(
+    tools: Sequence[tool.Tool] | Sequence[tool_v1beta1.Tool] | None,
+) -> list[dict[str, Any]]:
+    """Extract function declarations from Vertex AI Tools into a list of dicts.
+
+    Each dict has keys: name, description, parameters (matching the format
+    used by LLMInvocation.request_functions).
+
+    Note: Only ``function_declarations`` are extracted.  Other tool types
+    (Google Search, retrieval, code execution) do not carry function
+    metadata and are silently skipped.
+    """
+    if not tools:
+        return []
+    result: list[dict] = []
+    for t in tools:
+        for fd in t.function_declarations:
+            entry: dict = {"name": fd.name}
+            if fd.description:
+                entry["description"] = fd.description
+            if fd.parameters:
+                entry["parameters"] = json_format.MessageToDict(
+                    fd.parameters._pb
+                )  # type: ignore[reportUnknownMemberType]
+            result.append(entry)
+    return result

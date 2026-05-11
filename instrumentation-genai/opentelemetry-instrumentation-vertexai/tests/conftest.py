@@ -15,6 +15,7 @@ from typing import (
 )
 
 import pytest
+import vcr as vcr_module
 import vertexai
 import yaml
 from google.auth.aio.credentials import (
@@ -23,8 +24,6 @@ from google.auth.aio.credentials import (
 from google.auth.credentials import AnonymousCredentials
 from google.cloud.aiplatform.initializer import _set_async_rest_credentials
 from typing_extensions import Concatenate, ParamSpec
-from vcr import VCR
-from vcr.record_mode import RecordMode
 from vcr.request import Request
 from vertexai.generative_models import (
     GenerativeModel,
@@ -35,6 +34,7 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.util.genai import handler as genai_handler
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_TOOL_DEFINITIONS,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
 )
 
@@ -128,17 +128,14 @@ def environment():
 
 
 @pytest.fixture(autouse=True)
-def vertexai_init(vcr: VCR) -> None:
-    # When not recording (in CI), don't do any auth. That prevents trying to read application
-    # default credentials from the filesystem or metadata server and oauth token exchange. This
-    # is not the interesting part of our instrumentation to test.
-    credentials = None
-    project = None
-    if vcr.record_mode == RecordMode.NONE:
-        credentials = AnonymousCredentials()
-        project = FAKE_PROJECT
+def vertexai_init() -> None:
+    # In tests, always use anonymous credentials. VCR handles HTTP playback.
+    # When re-recording cassettes, override credentials via environment or
+    # temporarily change this fixture.
     vertexai.init(
-        api_transport="rest", credentials=credentials, project=project
+        api_transport="rest",
+        credentials=AnonymousCredentials(),
+        project=FAKE_PROJECT,
     )
 
 
@@ -187,6 +184,35 @@ def instrument_with_content(tracer_provider, logger_provider, meter_provider):
 
     yield instrumentor
     os.environ.pop(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(OTEL_INSTRUMENTATION_GENAI_EMITTERS, None)
+    if instrumentor.is_instrumented_by_opentelemetry:
+        instrumentor.uninstrument()
+
+
+@pytest.fixture(scope="function")
+def instrument_with_content_and_tool_defs(
+    tracer_provider, logger_provider, meter_provider
+):
+    os.environ.update(
+        {
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "True",
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_TOOL_DEFINITIONS: "True",
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS: "span_metric_event",
+        }
+    )
+
+    genai_handler.TelemetryHandler._reset_for_testing()
+
+    instrumentor = VertexAIInstrumentor()
+    instrumentor.instrument(
+        tracer_provider=tracer_provider,
+        logger_provider=logger_provider,
+        meter_provider=meter_provider,
+    )
+
+    yield instrumentor
+    os.environ.pop(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(OTEL_INSTRUMENTATION_GENAI_CAPTURE_TOOL_DEFINITIONS, None)
     os.environ.pop(OTEL_INSTRUMENTATION_GENAI_EMITTERS, None)
     if instrumentor.is_instrumented_by_opentelemetry:
         instrumentor.uninstrument()
@@ -292,9 +318,30 @@ class PrettyPrintJSONBody:
         return yaml.load(cassette_string, Loader=yaml.Loader)
 
 
-@pytest.fixture(scope="module", autouse=True)
+try:  # pragma: no cover - optional pytest-recording dependency
+    import pytest_recording  # type: ignore # noqa: F401
+
+    # Register custom YAML serializer globally
+    vcr_module.VCR().register_serializer("yaml", PrettyPrintJSONBody)
+
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - provide stub when plugin missing
+    try:
+        import pytest_vcr  # type: ignore # noqa: F401
+    except ModuleNotFoundError:
+
+        @pytest.fixture(name="vcr")
+        def _noop_vcr_fixture():
+            return None
+
+
+@pytest.fixture(scope="function", autouse=True)
 def fixture_vcr(vcr):
-    vcr.register_serializer("yaml", PrettyPrintJSONBody)
+    # When pytest-recording is installed, vcr is a Cassette and we don't need to do anything.
+    # The serializer is already registered on the VCR module above.
+    if vcr is not None and hasattr(vcr, "register_serializer"):
+        vcr.register_serializer("yaml", PrettyPrintJSONBody)
     return vcr
 
 
@@ -325,7 +372,7 @@ class GenerateContentFixture(Protocol):
 )
 def fixture_generate_content(
     request: pytest.FixtureRequest,
-    vcr: VCR,
+    vcr_config: dict,
 ) -> Generator[GenerateContentFixture, None, None]:
     """This fixture parameterizes tests that use it to test calling both
     GenerativeModel.generate_content() and GenerativeModel.generate_content_async().
@@ -342,7 +389,16 @@ def fixture_generate_content(
             return asyncio.run(model.generate_content_async(*args, **kwargs))
         return model.generate_content(*args, **kwargs)
 
-    with vcr.use_cassette(
-        request.node.originalname, allow_playback_repeats=True
+    # Create a VCR instance directly so that both sync and async params share
+    # the same cassette file (named by originalname, without the [sync]/[async]
+    # suffix).  This avoids depending on the pytest VCR plugin fixture which
+    # differs between pytest-vcr and pytest-recording.
+    v = vcr_module.VCR(**vcr_config)
+    v.register_serializer("yaml", PrettyPrintJSONBody)
+    cassette_dir = os.path.join(os.path.dirname(__file__), "cassettes")
+    v.cassette_library_dir = cassette_dir
+
+    with v.use_cassette(
+        f"{request.node.originalname}.yaml", allow_playback_repeats=True
     ):
         yield wrapper

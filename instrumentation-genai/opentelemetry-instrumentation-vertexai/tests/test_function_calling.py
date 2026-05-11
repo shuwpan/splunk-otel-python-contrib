@@ -4,6 +4,7 @@ import pytest
 from tests.shared_test_utils import (
     ask_about_weather,
     ask_about_weather_function_response,
+    assert_handler_event,
 )
 
 from opentelemetry.instrumentation.vertexai import VertexAIInstrumentor
@@ -21,21 +22,6 @@ except ImportError:
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-
-
-def assert_handler_event(log, parent_span):
-    """Assert log record is the unified GenAI handler event and return its body."""
-    assert (
-        log.log_record.event_name
-        == "gen_ai.client.inference.operation.details"
-    )
-    assert log.log_record.body is not None
-    if parent_span:
-        span_context = parent_span.get_span_context()
-        assert log.log_record.trace_id == span_context.trace_id
-        assert log.log_record.span_id == span_context.span_id
-        assert log.log_record.trace_flags == span_context.trace_flags
-    return dict(log.log_record.body)
 
 
 @pytest.mark.vcr()
@@ -63,6 +49,14 @@ def test_function_call_choice(
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
 
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
     # Content on span
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
@@ -78,12 +72,21 @@ def test_function_call_choice(
         }
     ]
 
-    # Output messages on span - function_call parts are skipped (HYBIM-604)
+    # Output messages on span — function_call parts now appear as ToolCall
     assert "gen_ai.output.messages" in attrs
     output_msgs = json.loads(attrs["gen_ai.output.messages"])
     assert len(output_msgs) == 1
     assert output_msgs[0]["role"] == "assistant"
     assert output_msgs[0]["finish_reason"] == "stop"
+    assert len(output_msgs[0]["parts"]) == 2
+    assert output_msgs[0]["parts"][0]["type"] == "tool_call"
+    assert output_msgs[0]["parts"][0]["name"] == "get_current_weather"
+    assert output_msgs[0]["parts"][0]["arguments"] == {"location": "New Delhi"}
+    assert output_msgs[0]["parts"][1]["type"] == "tool_call"
+    assert output_msgs[0]["parts"][1]["name"] == "get_current_weather"
+    assert output_msgs[0]["parts"][1]["arguments"] == {
+        "location": "San Francisco"
+    }
 
     # Content events emitter emits a single event
     logs = log_exporter.get_finished_logs()
@@ -108,7 +111,17 @@ def test_function_call_choice_no_content(
     attrs = dict(spans[0].attributes)
     assert attrs["gen_ai.operation.name"] == "chat"
     assert attrs["gen_ai.request.model"] == "gemini-2.5-pro"
+    assert attrs["gen_ai.response.finish_reasons"] == ("stop",)
     assert attrs["gen_ai.provider.name"] == "vertex_ai"
+
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
     assert "gen_ai.input.messages" not in attrs
     assert "gen_ai.output.messages" not in attrs
 
@@ -142,7 +155,15 @@ def test_tool_events(
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
 
-    # Content on span: user text, model function_call (skipped), user tool responses, model text response
+    # Tool definitions are always emitted
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
+    # Content on span: user text, assistant function_call, tool responses, assistant text response
     assert "gen_ai.input.messages" in attrs
     input_msgs = json.loads(attrs["gen_ai.input.messages"])
     assert len(input_msgs) == 3
@@ -154,9 +175,17 @@ def test_tool_events(
             "content": "Get weather details in New Delhi and San Francisco?",
         }
     ]
-    # Second message: assistant with function_call parts (skipped by convert_content_to_message_parts)
+    # Second message: assistant with function_call parts now mapped to ToolCall
     assert input_msgs[1]["role"] == "assistant"
-    assert input_msgs[1]["parts"] == []
+    assert len(input_msgs[1]["parts"]) == 2
+    assert input_msgs[1]["parts"][0]["type"] == "tool_call"
+    assert input_msgs[1]["parts"][0]["name"] == "get_current_weather"
+    assert input_msgs[1]["parts"][0]["arguments"] == {"location": "New Delhi"}
+    assert input_msgs[1]["parts"][1]["type"] == "tool_call"
+    assert input_msgs[1]["parts"][1]["name"] == "get_current_weather"
+    assert input_msgs[1]["parts"][1]["arguments"] == {
+        "location": "San Francisco"
+    }
     # Third message: tool with tool call responses
     assert input_msgs[2]["role"] == "tool"
     assert len(input_msgs[2]["parts"]) == 2
@@ -202,9 +231,65 @@ def test_tool_events_no_content(
     assert attrs["gen_ai.usage.output_tokens"] == 22
     assert attrs["server.address"] == "us-central1-aiplatform.googleapis.com"
     assert attrs["server.port"] == 443
+
+    # Tool definitions are always emitted (independent of content capture)
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+    assert (
+        attrs["gen_ai.request.function.0.description"]
+        == "Get the current weather in a given location"
+    )
+    assert "gen_ai.request.function.0.parameters" in attrs
+
+    # finish_reason stays "stop" because the *response* is a final text
+    # answer (no function_call parts in the response candidates)
     assert "gen_ai.input.messages" not in attrs
     assert "gen_ai.output.messages" not in attrs
 
     # No events emitted when content is disabled
     logs = log_exporter.get_finished_logs()
     assert len(logs) == 0
+
+
+@pytest.mark.vcr()
+def test_tool_definitions_emitted_when_opted_in(
+    span_exporter: InMemorySpanExporter,
+    log_exporter: InMemoryLogRecordExporter,
+    instrument_with_content_and_tool_defs: VertexAIInstrumentor,
+    generate_content: callable,
+):
+    ask_about_weather(generate_content)
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes)
+
+    # request_functions always emitted
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+
+    # tool_definitions emitted only when CAPTURE_TOOL_DEFINITIONS is set
+    assert "gen_ai.tool.definitions" in attrs
+    tool_defs = json.loads(attrs["gen_ai.tool.definitions"])
+    assert isinstance(tool_defs, list)
+    assert len(tool_defs) == 1
+    func_decls = tool_defs[0]["functionDeclarations"]
+    assert func_decls[0]["name"] == "get_current_weather"
+
+
+@pytest.mark.vcr()
+def test_tool_definitions_not_emitted_without_opt_in(
+    span_exporter: InMemorySpanExporter,
+    log_exporter: InMemoryLogRecordExporter,
+    instrument_with_content: VertexAIInstrumentor,
+    generate_content: callable,
+):
+    ask_about_weather(generate_content)
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes)
+
+    # request_functions always emitted
+    assert attrs["gen_ai.request.function.0.name"] == "get_current_weather"
+
+    # tool_definitions NOT emitted when CAPTURE_TOOL_DEFINITIONS is not set
+    assert "gen_ai.tool.definitions" not in attrs
