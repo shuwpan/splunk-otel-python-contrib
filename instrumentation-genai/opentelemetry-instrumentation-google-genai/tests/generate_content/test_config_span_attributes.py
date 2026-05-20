@@ -37,8 +37,8 @@ class ConfigSpanAttributesTestCase(TestCase):
             contents="Some input prompt",
             config=config,
         )
-        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
-        return self.otel.get_span_named("generate_content gemini-2.0-flash")
+        self.otel.assert_has_span_named("chat gemini-2.0-flash")
+        return self.otel.get_span_named("chat gemini-2.0-flash")
 
     def test_option_reflected_to_span_attribute_choice_count_config_dict(self):
         span = self.generate_and_get_span(config={"candidate_count": 2})

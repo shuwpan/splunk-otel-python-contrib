@@ -23,9 +23,7 @@ class FinishReasonsTestCase(TestCase):
         self.client.models.generate_content(
             model="gemini-2.5-flash-001", contents="Some prompt"
         )
-        span = self.otel.get_span_named(
-            "generate_content gemini-2.5-flash-001"
-        )
+        span = self.otel.get_span_named("chat gemini-2.5-flash-001")
         assert span is not None
         # ``gen_ai.response.finish_reasons`` may be absent when the
         # response carries no finish reason; util-genai's SpanEmitter

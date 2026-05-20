@@ -68,7 +68,7 @@ class TestSyncStreamEarlyBreak(StreamingMixin, StreamingTestCase):
         import gc
 
         gc.collect()
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertIsNotNone(span)
         # Span should have been finalized (not left dangling).
         self.assertIsNotNone(span.end_time)
@@ -82,7 +82,7 @@ class TestSyncStreamEarlyBreak(StreamingMixin, StreamingTestCase):
         first = next(iter(stream))
         self.assertEqual(first.text, "First chunk")
         stream.close()
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertIsNotNone(span.end_time)
         # Partial token data from the consumed chunk should be recorded.

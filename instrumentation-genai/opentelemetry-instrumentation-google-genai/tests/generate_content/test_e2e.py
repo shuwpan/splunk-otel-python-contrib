@@ -558,7 +558,7 @@ def test_non_streaming(generate_content, model, otel_mocker):
     assert response is not None
     assert response.text is not None
     assert len(response.text) > 0
-    otel_mocker.assert_has_span_named(f"generate_content {model}")
+    otel_mocker.assert_has_span_named(f"chat {model}")
 
 
 @pytest.mark.parametrize("semconv_version", ["default"], indirect=True)
@@ -573,7 +573,7 @@ def test_streaming(generate_content_stream, model, otel_mocker):
         assert len(response.text) > 0
         count += 1
     assert count > 0
-    otel_mocker.assert_has_span_named(f"generate_content {model}")
+    otel_mocker.assert_has_span_named(f"chat {model}")
 
 
 @pytest.mark.parametrize("semconv_version", ["experimental"], indirect=True)
@@ -621,7 +621,7 @@ def test_upload_hook_non_streaming(
         event.attributes["gen_ai.input.messages_ref"], expected_input
     )
 
-    span = otel_mocker.get_span_named(f"generate_content {model}")
+    span = otel_mocker.get_span_named(f"chat {model}")
     assert_fsspec_equal(
         span.attributes["gen_ai.output.messages_ref"], expected_output
     )

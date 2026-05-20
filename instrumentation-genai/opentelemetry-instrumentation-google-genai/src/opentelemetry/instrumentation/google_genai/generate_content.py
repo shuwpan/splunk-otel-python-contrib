@@ -72,7 +72,7 @@ _ASYNC_STREAM_CODE_FUNCTION_NAME = (
 )
 
 # Constant used for the value of 'gen_ai.operation.name".
-_GENERATE_CONTENT_OP_NAME = "generate_content"
+_GENERATE_CONTENT_OP_NAME = "chat"
 
 GENERATE_CONTENT_EXTRA_ATTRIBUTES_CONTEXT_KEY = context_api.create_key(
     "generate_content_extra_attributes_context_key"

@@ -63,7 +63,7 @@ class ResponseSemconvTestCase(TestCase):
                 model_version="gemini-2.0-flash-001",
             )
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertEqual(
             span.attributes["gen_ai.response.model"], "gemini-2.0-flash-001"
         )
@@ -82,7 +82,7 @@ class ResponseSemconvTestCase(TestCase):
                 response_id="resp-abc-123",
             )
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertEqual(span.attributes["gen_ai.response.id"], "resp-abc-123")
 
     # ------------------------------------------------ token-count edge case
@@ -104,7 +104,7 @@ class ResponseSemconvTestCase(TestCase):
                 ),
             )
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         # Zero is a valid token count; emitter must record it, not skip it.
         self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 0)
         self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 7)
@@ -120,7 +120,7 @@ class ResponseSemconvTestCase(TestCase):
                 ),
             )
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         # Goes through fail_llm → SpanEmitter.on_error → ERROR status +
         # error.type = synthetic exception's __qualname__.
         self.assertEqual(span.attributes["error.type"], "BlockedPromptError")
@@ -132,7 +132,7 @@ class ResponseSemconvTestCase(TestCase):
                 # No prompt_feedback at all → NoCandidatesError path.
             )
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertEqual(span.attributes["error.type"], "NoCandidatesError")
 
     # ---------------------------------------- Gemini-specific attributes
@@ -292,7 +292,7 @@ class ResponseSemconvTestCase(TestCase):
         self.client.models.generate_content(
             model="gemini-2.0-flash", contents="hi"
         )
-        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("chat gemini-2.0-flash")
         self.assertEqual(span.attributes.get("gen_ai.provider.name"), "google")
 
 
