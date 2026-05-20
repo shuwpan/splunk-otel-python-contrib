@@ -169,6 +169,9 @@ class ResponseSemconvTestCase(TestCase):
         )
 
     def test_gemini_backend_set_on_invocation(self):
+        from opentelemetry.instrumentation.google_genai.allowlist_util import (
+            AllowList,
+        )
         from opentelemetry.instrumentation.google_genai.generate_content import (
             _build_invocation,
         )
@@ -178,7 +181,7 @@ class ResponseSemconvTestCase(TestCase):
             "gemini-2.0-flash",
             "hi",
             None,
-            None,
+            AllowList(),
         )
         self.assertEqual(
             inv.attributes["gen_ai.google.request.backend"], "gemini"
