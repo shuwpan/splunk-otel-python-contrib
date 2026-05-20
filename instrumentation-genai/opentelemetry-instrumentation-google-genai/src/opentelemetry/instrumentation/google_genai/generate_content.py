@@ -806,7 +806,7 @@ class _StreamFinalizer:
             else:
                 self._handler.fail_llm(self._invocation, response_error)
         except Exception:  # pragma: no cover - defensive
-            pass
+            _logger.debug("Stream finalizer failed", exc_info=True)
 
     def _handle_error(self, error):
         if self._finished:

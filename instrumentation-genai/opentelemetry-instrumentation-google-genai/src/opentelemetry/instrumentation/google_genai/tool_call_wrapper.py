@@ -160,13 +160,13 @@ def _wrap_sync_tool_function(
             _record_function_call_arguments(tool_function, args, kwargs)
             result = tool_function(*args, **kwargs)
             _record_function_call_result(result)
-            handler.stop_tool_call(tool_call)
-            return result
         except Exception as error:
             handler.fail_tool_call(
                 tool_call, Error(message=str(error), type=type(error))
             )
             raise
+        handler.stop_tool_call(tool_call)
+        return result
 
     return wrapped_function
 
@@ -187,13 +187,13 @@ def _wrap_async_tool_function(
             _record_function_call_arguments(tool_function, args, kwargs)
             result = await tool_function(*args, **kwargs)
             _record_function_call_result(result)
-            handler.stop_tool_call(tool_call)
-            return result
         except Exception as error:
             handler.fail_tool_call(
                 tool_call, Error(message=str(error), type=type(error))
             )
             raise
+        handler.stop_tool_call(tool_call)
+        return result
 
     return wrapped_function
 
