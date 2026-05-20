@@ -249,9 +249,9 @@ def _create_instrumented_embed_content(
         try:
             _apply_embed_response(invocation, response)
             _set_vendor_attributes_on_span(invocation)
-            handler.stop_embedding(invocation)
         except Exception:  # pragma: no cover - defensive
             pass
+        handler.stop_embedding(invocation)
         return response
 
     return instrumented_embed_content
@@ -305,9 +305,9 @@ def _create_instrumented_async_embed_content(
         try:
             _apply_embed_response(invocation, response)
             _set_vendor_attributes_on_span(invocation)
-            handler.stop_embedding(invocation)
         except Exception:  # pragma: no cover - defensive
             pass
+        handler.stop_embedding(invocation)
         return response
 
     return instrumented_async_embed_content
