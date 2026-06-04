@@ -36,8 +36,8 @@ class ConfigSpanAttributesTestCase(TestCase):
             contents="Some input prompt",
             config=config,
         )
-        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
-        return self.otel.get_span_named("generate_content gemini-2.0-flash")
+        self.otel.assert_has_span_named("chat gemini-2.0-flash")
+        return self.otel.get_span_named("chat gemini-2.0-flash")
 
     def test_option_reflected_to_span_attribute_choice_count_config_dict(self):
         span = self.generate_and_get_span(config={"candidate_count": 2})
@@ -105,14 +105,15 @@ class ConfigSpanAttributesTestCase(TestCase):
         span = self.generate_and_get_span(
             config={"system_instruction": "Yadda yadda yadda"}
         )
+        # The dedicated GenAI semantic convention key for system instructions
+        # MUST NOT be populated by the legacy custom-config path.
         self.assertNotIn(
             "gcp.gen_ai.operation.config.system_instruction", span.attributes
         )
         self.assertNotIn("gen_ai.request.system_instruction", span.attributes)
-        for key in span.attributes:
-            value = span.attributes[key]
-            if isinstance(value, str):
-                self.assertNotIn("Yadda yadda yadda", value)
+        # NOTE: with content capture enabled, the system instruction WILL
+        # appear on the ``gen_ai.system_instructions`` span attribute via the
+        # util-genai SpanEmitter — that is expected and not exercised here.
 
     @mock.patch.dict(
         os.environ, {"OTEL_GOOGLE_GENAI_GENERATE_CONTENT_CONFIG_INCLUDES": "*"}

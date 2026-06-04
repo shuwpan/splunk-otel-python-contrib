@@ -20,15 +20,13 @@ from enum import Enum
 from google.genai import types as genai_types
 
 from opentelemetry.util.genai.types import (
-    Blob,
     FinishReason,
     InputMessage,
     MessagePart,
     OutputMessage,
     Text,
-    ToolCallRequest,
+    ToolCall,
     ToolCallResponse,
-    Uri,
 )
 
 
@@ -96,6 +94,11 @@ def _to_input_message(
 
 
 def _to_part(part: genai_types.Part, idx: int) -> MessagePart | None:
+    # Thinking-model parts (e.g. Gemini 2.5) have `thought=True`.
+    # These are internal chain-of-thought and should not appear in telemetry.
+    if getattr(part, "thought", False):
+        return None
+
     def tool_call_id(name: str | None) -> str:
         if name:
             return f"{name}_{idx}"
@@ -104,29 +107,22 @@ def _to_part(part: genai_types.Part, idx: int) -> MessagePart | None:
     if (text := part.text) is not None:
         return Text(content=text)
 
-    if inline_data := part.inline_data:
-        mime_type = inline_data.mime_type or ""
-        modality = mime_type.split("/")[0] if mime_type else ""
-        return Blob(
-            mime_type=mime_type,
-            modality=modality,
-            content=inline_data.data or b"",
-        )
+    # Blob (inline_data) and Uri (file_data) types are not yet available in
+    # util-genai. Skipped until HYBIM-604.
+    if part.inline_data:
+        _logger.debug("Skipping inline_data part (Blob type not available)")
+        return None
 
-    if file_data := part.file_data:
-        mime_type = file_data.mime_type or ""
-        modality = mime_type.split("/")[0] if mime_type else ""
-        return Uri(
-            mime_type=mime_type,
-            modality=modality,
-            uri=file_data.file_uri or "",
-        )
+    if part.file_data:
+        _logger.debug("Skipping file_data part (Uri type not available)")
+        return None
 
     if call := part.function_call:
-        return ToolCallRequest(
-            id=call.id or tool_call_id(call.name),
+        return ToolCall(
             name=call.name or "",
             arguments=call.args,
+            id=getattr(call, "id", None) or tool_call_id(call.name),
+            tool_type="function",
         )
 
     if response := part.function_response:
@@ -147,20 +143,48 @@ def _to_role(role: str | None) -> str:
     return ""
 
 
+_CONTENT_FILTER_REASONS: frozenset[genai_types.FinishReason] = frozenset(
+    r
+    for name in (
+        "SAFETY",
+        "IMAGE_SAFETY",
+        "BLOCKLIST",
+        "PROHIBITED_CONTENT",
+        "IMAGE_PROHIBITED_CONTENT",
+        "SPII",
+        "RECITATION",
+        "IMAGE_RECITATION",
+        "LANGUAGE",
+    )
+    if (r := getattr(genai_types.FinishReason, name, None)) is not None
+)
+
+_ERROR_REASONS: frozenset[genai_types.FinishReason] = frozenset(
+    r
+    for name in (
+        "FINISH_REASON_UNSPECIFIED",
+        "OTHER",
+        "IMAGE_OTHER",
+        "UNEXPECTED_TOOL_CALL",
+        "MALFORMED_FUNCTION_CALL",
+        "NO_IMAGE",
+    )
+    if (r := getattr(genai_types.FinishReason, name, None)) is not None
+)
+
+
 def _to_finish_reason(
     finish_reason: genai_types.FinishReason | None,
 ) -> FinishReason | str:
     if finish_reason is None:
         return ""
-    if (
-        finish_reason is genai_types.FinishReason.FINISH_REASON_UNSPECIFIED
-        or finish_reason is genai_types.FinishReason.OTHER
-    ):
+    if finish_reason in _ERROR_REASONS:
         return "error"
     if finish_reason is genai_types.FinishReason.STOP:
         return "stop"
     if finish_reason is genai_types.FinishReason.MAX_TOKENS:
         return "length"
-
-    # If there is no 1:1 mapping to an OTel preferred enum value, use the exact vertex reason
-    return finish_reason.name
+    if finish_reason in _CONTENT_FILTER_REASONS:
+        return "content_filter"
+    # If there is no 1:1 mapping to an OTel preferred enum value, use the exact reason
+    return finish_reason.value.lower()

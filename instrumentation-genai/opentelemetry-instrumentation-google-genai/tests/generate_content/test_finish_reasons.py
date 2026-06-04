@@ -23,12 +23,12 @@ class FinishReasonsTestCase(TestCase):
         self.client.models.generate_content(
             model="gemini-2.5-flash-001", contents="Some prompt"
         )
-        span = self.otel.get_span_named(
-            "generate_content gemini-2.5-flash-001"
-        )
+        span = self.otel.get_span_named("chat gemini-2.5-flash-001")
         assert span is not None
-        assert "gen_ai.response.finish_reasons" in span.attributes
-        return list(span.attributes["gen_ai.response.finish_reasons"])
+        # ``gen_ai.response.finish_reasons`` may be absent when the
+        # response carries no finish reason; util-genai's SpanEmitter
+        # does not emit empty finish-reason lists. Treat absent as [].
+        return list(span.attributes.get("gen_ai.response.finish_reasons", []))
 
     def test_single_candidate_with_valid_reason(self):
         self.configure_valid_response(
@@ -45,7 +45,7 @@ class FinishReasonsTestCase(TestCase):
             )
         )
         self.assertEqual(
-            self.generate_and_get_span_finish_reasons(), ["safety"]
+            self.generate_and_get_span_finish_reasons(), ["content_filter"]
         )
 
     def test_single_candidate_with_max_tokens_reason(self):
@@ -55,7 +55,7 @@ class FinishReasonsTestCase(TestCase):
             )
         )
         self.assertEqual(
-            self.generate_and_get_span_finish_reasons(), ["max_tokens"]
+            self.generate_and_get_span_finish_reasons(), ["length"]
         )
 
     def test_single_candidate_with_no_reason(self):
@@ -71,7 +71,7 @@ class FinishReasonsTestCase(TestCase):
             )
         )
         self.assertEqual(
-            self.generate_and_get_span_finish_reasons(), ["unspecified"]
+            self.generate_and_get_span_finish_reasons(), ["error"]
         )
 
     def test_multiple_candidates_with_valid_reasons(self):
@@ -86,7 +86,7 @@ class FinishReasonsTestCase(TestCase):
             ]
         )
         self.assertEqual(
-            self.generate_and_get_span_finish_reasons(), ["max_tokens", "stop"]
+            self.generate_and_get_span_finish_reasons(), ["length", "stop"]
         )
 
     def test_sorts_finish_reasons(self):
@@ -105,7 +105,67 @@ class FinishReasonsTestCase(TestCase):
         )
         self.assertEqual(
             self.generate_and_get_span_finish_reasons(),
-            ["max_tokens", "safety", "stop"],
+            ["content_filter", "length", "stop"],
+        )
+
+    def test_blocklist_maps_to_content_filter(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.BLOCKLIST
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["content_filter"]
+        )
+
+    def test_recitation_maps_to_content_filter(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.RECITATION
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["content_filter"]
+        )
+
+    def test_spii_maps_to_content_filter(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.SPII
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["content_filter"]
+        )
+
+    def test_malformed_function_call_maps_to_error(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.MALFORMED_FUNCTION_CALL
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["error"]
+        )
+
+    def test_unexpected_tool_call_maps_to_error(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.UNEXPECTED_TOOL_CALL
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["error"]
+        )
+
+    def test_other_maps_to_error(self):
+        self.configure_valid_response(
+            candidate=genai_types.Candidate(
+                finish_reason=genai_types.FinishReason.OTHER
+            )
+        )
+        self.assertEqual(
+            self.generate_and_get_span_finish_reasons(), ["error"]
         )
 
     def test_deduplicates_finish_reasons(self):
@@ -139,5 +199,5 @@ class FinishReasonsTestCase(TestCase):
         )
         self.assertEqual(
             self.generate_and_get_span_finish_reasons(),
-            ["max_tokens", "safety", "stop"],
+            ["content_filter", "length", "stop"],
         )
