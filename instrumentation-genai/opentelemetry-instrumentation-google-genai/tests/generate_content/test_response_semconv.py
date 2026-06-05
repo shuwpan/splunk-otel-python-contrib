@@ -22,6 +22,8 @@
   silently dropped by the SpanEmitter's supplemental-attribute filter).
 """
 
+import unittest.mock
+
 import google.genai.types as genai_types
 import pytest
 from google.genai.types import (
@@ -47,6 +49,9 @@ class ResponseSemconvTestCase(TestCase):
             model="gemini-2.0-flash", contents="hi"
         )
 
+    def _span(self):
+        return self.otel.get_span_named("generate_content gemini-2.0-flash")
+
     # -------------------------------------------- response identity attrs
 
     def test_response_model_name_set_from_model_version(self):
@@ -63,7 +68,7 @@ class ResponseSemconvTestCase(TestCase):
                 model_version="gemini-2.0-flash-001",
             )
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self._span()
         self.assertEqual(
             span.attributes["gen_ai.response.model"], "gemini-2.0-flash-001"
         )
@@ -82,7 +87,7 @@ class ResponseSemconvTestCase(TestCase):
                 response_id="resp-abc-123",
             )
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self._span()
         self.assertEqual(span.attributes["gen_ai.response.id"], "resp-abc-123")
 
     # ------------------------------------------------ token-count edge case
@@ -104,7 +109,7 @@ class ResponseSemconvTestCase(TestCase):
                 ),
             )
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self._span()
         # Zero is a valid token count; emitter must record it, not skip it.
         self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 0)
         self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 7)
@@ -120,7 +125,7 @@ class ResponseSemconvTestCase(TestCase):
                 ),
             )
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self._span()
         # Goes through fail_llm → SpanEmitter.on_error → ERROR status +
         # error.type = synthetic exception's __qualname__.
         self.assertEqual(span.attributes["error.type"], "BlockedPromptError")
@@ -132,7 +137,7 @@ class ResponseSemconvTestCase(TestCase):
                 # No prompt_feedback at all → NoCandidatesError path.
             )
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self._span()
         self.assertEqual(span.attributes["error.type"], "NoCandidatesError")
 
     # ---------------------------------------- Gemini-specific attributes
@@ -287,13 +292,66 @@ class ResponseSemconvTestCase(TestCase):
 
     # -------------------------------------------- provider / framework
 
-    def test_provider_is_google(self):
+    def test_operation_name_is_generate_content(self):
         self.configure_valid_response(text="hello")
         self.client.models.generate_content(
             model="gemini-2.0-flash", contents="hi"
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
-        self.assertEqual(span.attributes.get("gen_ai.provider.name"), "google")
+        span = self._span()
+        self.assertEqual(
+            span.attributes.get("gen_ai.operation.name"), "generate_content"
+        )
+
+    def test_gemini_provider_is_gcp_gen_ai(self):
+        self.configure_valid_response(text="hello")
+        self.client.models.generate_content(
+            model="gemini-2.0-flash", contents="hi"
+        )
+        span = self._span()
+        self.assertEqual(
+            span.attributes.get("gen_ai.provider.name"), "gcp.gemini"
+        )
+
+    def test_vertex_provider_is_gcp_vertex_ai(self):
+        self.set_use_vertex(True)
+        self.configure_valid_response(text="hello")
+        self.client.models.generate_content(
+            model="gemini-2.0-flash", contents="hi"
+        )
+        span = self._span()
+        self.assertEqual(
+            span.attributes.get("gen_ai.provider.name"), "gcp.vertex_ai"
+        )
+
+    def test_unknown_google_provider_falls_back_to_gcp_gen_ai(self):
+        from opentelemetry.instrumentation.google_genai.generate_content import (
+            _provider_name_from_system,
+        )
+
+        self.assertEqual(
+            _provider_name_from_system("unknown-google-backend"),
+            "gcp.gen_ai",
+        )
+
+    def test_response_conversion_failure_still_ends_span(self):
+        self.configure_valid_response(text="hello")
+        self._responses.clear()
+        self._responses.append(GenerateContentResponse(candidates=[]))
+
+        from opentelemetry.instrumentation.google_genai import (
+            generate_content,
+        )
+
+        with unittest.mock.patch.object(
+            generate_content,
+            "_apply_response",
+            side_effect=RuntimeError("telemetry conversion failed"),
+        ):
+            self.client.models.generate_content(
+                model="gemini-2.0-flash", contents="hi"
+            )
+
+        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
 
 
 if __name__ == "__main__":

@@ -127,7 +127,7 @@ Key span attributes on `generate_content` spans:
 | `gen_ai.response.model` | `gemini-2.5-flash` |
 | `gen_ai.system` | `vertex_ai` |
 | `gen_ai.framework` | `google-genai-sdk` |
-| `gen_ai.provider.name` | `google` |
+| `gen_ai.provider.name` | `gcp.gemini` |
 | `gen_ai.usage.input_tokens` | `336` |
 | `gen_ai.usage.output_tokens` | `96` |
 | `gen_ai.response.finish_reasons` | `('stop',)` |

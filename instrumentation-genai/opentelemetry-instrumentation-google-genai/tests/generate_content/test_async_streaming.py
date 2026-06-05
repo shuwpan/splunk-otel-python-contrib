@@ -78,7 +78,7 @@ class TestAsyncStreamEarlyBreak(AsyncStreamingMixin, StreamingTestCase):
             gc.collect()
 
         asyncio.run(_break_after_first())
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertIsNotNone(span.end_time)
 
@@ -95,7 +95,7 @@ class TestAsyncStreamEarlyBreak(AsyncStreamingMixin, StreamingTestCase):
             await stream.aclose()
 
         asyncio.run(_aclose_after_first())
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertIsNotNone(span.end_time)
         self.assertIsNotNone(

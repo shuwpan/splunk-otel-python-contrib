@@ -76,7 +76,10 @@ _ASYNC_STREAM_CODE_FUNCTION_NAME = (
 )
 
 # Constant used for the value of 'gen_ai.operation.name".
-_GENERATE_CONTENT_OP_NAME = "chat"
+_GENERATE_CONTENT_OP_NAME = "generate_content"
+_GEMINI_PROVIDER_NAME = "gcp.gemini"
+_VERTEX_AI_PROVIDER_NAME = "gcp.vertex_ai"
+_UNKNOWN_GOOGLE_PROVIDER_NAME = "gcp.gen_ai"
 
 GENERATE_CONTENT_EXTRA_ATTRIBUTES_CONTEXT_KEY = context_api.create_key(
     "generate_content_extra_attributes_context_key"
@@ -176,6 +179,14 @@ def _determine_genai_system(models_object: Union[Models, AsyncModels]):
     if vertexai_attr:
         return _get_vertexai_system_name()
     return _get_gemini_system_name()
+
+
+def _provider_name_from_system(genai_system: str) -> str:
+    if genai_system == _get_vertexai_system_name():
+        return _VERTEX_AI_PROVIDER_NAME
+    if genai_system == _get_gemini_system_name():
+        return _GEMINI_PROVIDER_NAME
+    return _UNKNOWN_GOOGLE_PROVIDER_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +466,7 @@ def _build_invocation(
 
     invocation = LLMInvocation(
         system=genai_system,
-        provider="google",
+        provider=_provider_name_from_system(genai_system),
         framework="google-genai-sdk",
         request_model=model,
         operation=_GENERATE_CONTENT_OP_NAME,
@@ -495,6 +506,36 @@ def _build_invocation(
         invocation.tool_definitions = _collect_tool_definitions(config)
 
     return invocation
+
+
+def _finish_llm_from_response(
+    handler: TelemetryHandler,
+    invocation: LLMInvocation,
+    response: GenerateContentResponse,
+) -> None:
+    response_error = None
+    try:
+        response_error = _apply_response(invocation, response)
+    except Exception:
+        _logger.debug(
+            "Failed to apply generate_content response", exc_info=True
+        )
+    try:
+        _set_vendor_attributes_on_span(invocation)
+    except Exception:
+        _logger.debug(
+            "Failed to set Google GenAI span attributes", exc_info=True
+        )
+
+    try:
+        if response_error is None:
+            handler.stop_llm(invocation)
+        else:
+            handler.fail_llm(invocation, response_error)
+    except Exception:  # pragma: no cover - defensive
+        _logger.debug(
+            "Failed to end generate_content invocation", exc_info=True
+        )
 
 
 # Prefixes for Google-specific attributes that the util-genai SpanEmitter
@@ -799,12 +840,9 @@ class _StreamFinalizer:
         self._finished = True
         try:
             accumulated = _build_accumulated_response(self._chunks)
-            response_error = _apply_response(self._invocation, accumulated)
-            _set_vendor_attributes_on_span(self._invocation)
-            if response_error is None:
-                self._handler.stop_llm(self._invocation)
-            else:
-                self._handler.fail_llm(self._invocation, response_error)
+            _finish_llm_from_response(
+                self._handler, self._invocation, accumulated
+            )
         except Exception:  # pragma: no cover - defensive
             _logger.debug("Stream finalizer failed", exc_info=True)
 
@@ -982,15 +1020,7 @@ def _create_instrumented_generate_content(
                 Error(message=str(error), type=type(error)),
             )
             raise
-        try:
-            response_error = _apply_response(invocation, response)
-            _set_vendor_attributes_on_span(invocation)
-            if response_error is None:
-                handler.stop_llm(invocation)
-            else:
-                handler.fail_llm(invocation, response_error)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        _finish_llm_from_response(handler, invocation, response)
         return response
 
     return instrumented_generate_content
@@ -1112,15 +1142,7 @@ def _create_instrumented_async_generate_content(
                 Error(message=str(error), type=type(error)),
             )
             raise
-        try:
-            response_error = _apply_response(invocation, response)
-            _set_vendor_attributes_on_span(invocation)
-            if response_error is None:
-                handler.stop_llm(invocation)
-            else:
-                handler.fail_llm(invocation, response_error)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        _finish_llm_from_response(handler, invocation, response)
         return response
 
     return instrumented_generate_content

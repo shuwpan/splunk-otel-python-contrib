@@ -430,7 +430,7 @@ class ToolCallInstrumentationTestCase(TestCase):
             contents="What is the weather?",
             config={"tools": [get_weather]},
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span, "LLM span not found")
         self.assertIn("gen_ai.tool.definitions", span.attributes)
         defs = json.loads(span.attributes["gen_ai.tool.definitions"])
@@ -452,7 +452,7 @@ class ToolCallInstrumentationTestCase(TestCase):
             contents="What is the weather?",
             config={"tools": [get_weather]},
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span, "LLM span not found")
         self.assertNotIn("gen_ai.tool.definitions", span.attributes)
 
@@ -476,7 +476,7 @@ class ToolCallInstrumentationTestCase(TestCase):
             contents="What is the weather?",
             config={"tools": [get_weather]},
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span, "LLM span not found")
         self.assertNotIn("gen_ai.tool.definitions", span.attributes)
 

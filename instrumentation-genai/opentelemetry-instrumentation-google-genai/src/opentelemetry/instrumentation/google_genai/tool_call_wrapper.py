@@ -42,7 +42,7 @@ def _to_otel_value(python_value):
     """Coerces parameters to something representable with Open Telemetry."""
     if python_value is None or _is_primitive(python_value):
         return python_value
-    if isinstance(python_value, list):
+    if isinstance(python_value, (list, tuple)):
         return [_to_otel_value(x) for x in python_value]
     if isinstance(python_value, dict):
         return {
@@ -114,6 +114,36 @@ def _record_function_call_arguments(
         _record_function_call_argument(span, key, value, include_values)
 
 
+def _function_call_arguments(tool_function, function_args, function_kwargs):
+    try:
+        bound = inspect.signature(tool_function).bind_partial(
+            *function_args, **function_kwargs
+        )
+        return {
+            key: _to_otel_value(value)
+            for key, value in bound.arguments.items()
+        }
+    except Exception:
+        _logger.debug(
+            "Failed to bind Google GenAI tool function arguments",
+            exc_info=True,
+        )
+
+    result = {}
+    try:
+        params = list(inspect.signature(tool_function).parameters.values())
+    except Exception:
+        params = []
+    for index, entry in enumerate(function_args):
+        param_name = (
+            params[index].name if index < len(params) else f"args[{index}]"
+        )
+        result[param_name] = _to_otel_value(entry)
+    for key, value in function_kwargs.items():
+        result[key] = _to_otel_value(value)
+    return result
+
+
 def _record_function_call_result(result):
     """Records function return value details as span attributes on the current span."""
     include_values = _is_capture_content_enabled()
@@ -144,6 +174,97 @@ def _build_tool_call(
     return tool_call
 
 
+def _safe_capture_function_call_arguments(
+    tool_call: ToolCall,
+    tool_function: ToolFunction,
+    args,
+    kwargs,
+) -> None:
+    if _is_capture_content_enabled():
+        try:
+            tool_call.arguments = _function_call_arguments(
+                tool_function, args, kwargs
+            )
+        except Exception:
+            _logger.debug(
+                "Failed to capture Google GenAI tool arguments",
+                exc_info=True,
+            )
+
+
+def _safe_record_function_call_arguments(
+    tool_function: ToolFunction,
+    args,
+    kwargs,
+) -> None:
+    try:
+        _record_function_call_arguments(tool_function, args, kwargs)
+    except Exception:
+        _logger.debug(
+            "Failed to record Google GenAI tool argument attributes",
+            exc_info=True,
+        )
+
+
+def _safe_record_function_call_result(
+    tool_call: ToolCall,
+    result,
+) -> None:
+    if _is_capture_content_enabled():
+        try:
+            tool_call.tool_result = _to_otel_value(result)
+        except Exception:
+            _logger.debug(
+                "Failed to capture Google GenAI tool result",
+                exc_info=True,
+            )
+    try:
+        _record_function_call_result(result)
+    except Exception:
+        _logger.debug(
+            "Failed to record Google GenAI tool result attributes",
+            exc_info=True,
+        )
+
+
+def _safe_start_tool_call(
+    handler: TelemetryHandler, tool_call: ToolCall
+) -> bool:
+    try:
+        handler.start_tool_call(tool_call)
+        return True
+    except Exception:
+        _logger.debug("Failed to start Google GenAI tool span", exc_info=True)
+        return False
+
+
+def _safe_stop_tool_call(
+    handler: TelemetryHandler,
+    tool_call: ToolCall,
+    started: bool,
+) -> None:
+    if not started:
+        return
+    try:
+        handler.stop_tool_call(tool_call)
+    except Exception:
+        _logger.debug("Failed to stop Google GenAI tool span", exc_info=True)
+
+
+def _safe_fail_tool_call(
+    handler: TelemetryHandler,
+    tool_call: ToolCall,
+    error: Error,
+    started: bool,
+) -> None:
+    if not started:
+        return
+    try:
+        handler.fail_tool_call(tool_call, error)
+    except Exception:
+        _logger.debug("Failed to fail Google GenAI tool span", exc_info=True)
+
+
 def _wrap_sync_tool_function(
     tool_function: ToolFunction,
     handler: TelemetryHandler,
@@ -155,17 +276,23 @@ def _wrap_sync_tool_function(
         tool_call = _build_tool_call(tool_function, system, provider)
         tool_call.attributes["code.args.positional.count"] = len(args)
         tool_call.attributes["code.args.keyword.count"] = len(kwargs)
-        handler.start_tool_call(tool_call)
+        _safe_capture_function_call_arguments(
+            tool_call, tool_function, args, kwargs
+        )
+        started = _safe_start_tool_call(handler, tool_call)
+        _safe_record_function_call_arguments(tool_function, args, kwargs)
         try:
-            _record_function_call_arguments(tool_function, args, kwargs)
             result = tool_function(*args, **kwargs)
-            _record_function_call_result(result)
         except Exception as error:
-            handler.fail_tool_call(
-                tool_call, Error(message=str(error), type=type(error))
+            _safe_fail_tool_call(
+                handler,
+                tool_call,
+                Error(message=str(error), type=type(error)),
+                started,
             )
             raise
-        handler.stop_tool_call(tool_call)
+        _safe_record_function_call_result(tool_call, result)
+        _safe_stop_tool_call(handler, tool_call, started)
         return result
 
     return wrapped_function
@@ -182,17 +309,23 @@ def _wrap_async_tool_function(
         tool_call = _build_tool_call(tool_function, system, provider)
         tool_call.attributes["code.args.positional.count"] = len(args)
         tool_call.attributes["code.args.keyword.count"] = len(kwargs)
-        handler.start_tool_call(tool_call)
+        _safe_capture_function_call_arguments(
+            tool_call, tool_function, args, kwargs
+        )
+        started = _safe_start_tool_call(handler, tool_call)
+        _safe_record_function_call_arguments(tool_function, args, kwargs)
         try:
-            _record_function_call_arguments(tool_function, args, kwargs)
             result = await tool_function(*args, **kwargs)
-            _record_function_call_result(result)
         except Exception as error:
-            handler.fail_tool_call(
-                tool_call, Error(message=str(error), type=type(error))
+            _safe_fail_tool_call(
+                handler,
+                tool_call,
+                Error(message=str(error), type=type(error)),
+                started,
             )
             raise
-        handler.stop_tool_call(tool_call)
+        _safe_record_function_call_result(tool_call, result)
+        _safe_stop_tool_call(handler, tool_call, started)
         return result
 
     return wrapped_function

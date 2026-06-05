@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -262,6 +263,60 @@ class TestCase(unittest.TestCase):
             span.attributes["code.function.parameters.arg.value"],
             '[123, "abc"]',
         )
+
+    def test_records_standard_tool_call_arguments_and_result(self):
+        def somefunction(arg=None):
+            return {"ok": arg}
+
+        wrapped_somefunction = self.wrap(somefunction)
+        result = wrapped_somefunction(12345)
+
+        self.assertEqual(result, {"ok": 12345})
+        span = self.otel.get_span_named("execute_tool somefunction")
+        self.assertEqual(
+            json.loads(span.attributes["gen_ai.tool.call.arguments"]),
+            {"arg": 12345},
+        )
+        self.assertEqual(
+            json.loads(span.attributes["gen_ai.tool.call.result"]),
+            {"ok": 12345},
+        )
+
+    def test_argument_recording_failure_does_not_skip_tool_call(self):
+        calls = []
+
+        def somefunction(arg=None):
+            calls.append(arg)
+            return "ok"
+
+        wrapped_somefunction = self.wrap(somefunction)
+
+        with patch.object(
+            tool_call_wrapper,
+            "_record_function_call_arguments",
+            side_effect=RuntimeError("telemetry argument failure"),
+        ):
+            result = wrapped_somefunction(12345)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls, [12345])
+        self.otel.assert_has_span_named("execute_tool somefunction")
+
+    def test_result_recording_failure_does_not_replace_tool_result(self):
+        def somefunction():
+            return "ok"
+
+        wrapped_somefunction = self.wrap(somefunction)
+
+        with patch.object(
+            tool_call_wrapper,
+            "_record_function_call_result",
+            side_effect=RuntimeError("telemetry result failure"),
+        ):
+            result = wrapped_somefunction()
+
+        self.assertEqual(result, "ok")
+        self.otel.assert_has_span_named("execute_tool somefunction")
 
     def test_content_capture_respects_mode(self):
         def somefunction(arg=None):

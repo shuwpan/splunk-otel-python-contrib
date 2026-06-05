@@ -57,7 +57,7 @@ class NonStreamingTestCase(TestCase):
             model="gemini-2.0-flash", contents="Does this work?"
         )
         self.assertEqual(response.text, "Yep, it works!")
-        self.otel.assert_has_span_named("chat gemini-2.0-flash")
+        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
 
     def test_model_reflected_into_span_name(self):
         self.configure_valid_response(text="Yep, it works!")
@@ -65,7 +65,7 @@ class NonStreamingTestCase(TestCase):
             model="gemini-1.5-flash", contents="Does this work?"
         )
         self.assertEqual(response.text, "Yep, it works!")
-        self.otel.assert_has_span_named("chat gemini-1.5-flash")
+        self.otel.assert_has_span_named("generate_content gemini-1.5-flash")
 
     # -------------------------------------------------------- span attributes
 
@@ -74,10 +74,12 @@ class NonStreamingTestCase(TestCase):
         self.generate_content(
             model="gemini-2.0-flash", contents="Does this work?"
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(span.attributes["gen_ai.system"], "gemini")
-        self.assertEqual(span.attributes["gen_ai.operation.name"], "chat")
+        self.assertEqual(
+            span.attributes["gen_ai.operation.name"], "generate_content"
+        )
         self.assertEqual(
             span.attributes["gen_ai.request.model"], "gemini-2.0-flash"
         )
@@ -87,7 +89,7 @@ class NonStreamingTestCase(TestCase):
         self.generate_content(
             model="gemini-2.0-flash", contents="Does this work?"
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(
             span.attributes["code.function.name"],
@@ -100,15 +102,17 @@ class NonStreamingTestCase(TestCase):
         self.generate_content(
             model="gemini-2.0-flash", contents="Does this work?"
         )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(span.attributes["gen_ai.system"], "vertex_ai")
-        self.assertEqual(span.attributes["gen_ai.operation.name"], "chat")
+        self.assertEqual(
+            span.attributes["gen_ai.operation.name"], "generate_content"
+        )
 
     def test_generated_span_counts_tokens(self):
         self.configure_valid_response(input_tokens=123, output_tokens=456)
         self.generate_content(model="gemini-2.0-flash", contents="Some input")
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 123)
         self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 456)
@@ -121,7 +125,7 @@ class NonStreamingTestCase(TestCase):
             self.generate_content(
                 model="gemini-2.0-flash", contents="Does this work?"
             )
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(span.attributes.get("error.type"), "ValueError")
 
@@ -137,7 +141,9 @@ class NonStreamingTestCase(TestCase):
             "gen_ai.client.inference.operation.details"
         )
         # The event carries the same gen_ai.* attributes as the span.
-        self.assertEqual(event.attributes["gen_ai.operation.name"], "chat")
+        self.assertEqual(
+            event.attributes["gen_ai.operation.name"], "generate_content"
+        )
         self.assertEqual(
             event.attributes["gen_ai.request.model"], "gemini-2.0-flash"
         )

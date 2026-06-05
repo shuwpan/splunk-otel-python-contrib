@@ -48,13 +48,13 @@ class StreamingTestCase(TestCase):
     def test_span_has_request_stream_attribute(self):
         self.configure_valid_response(text="hi")
         self.generate_content(model="gemini-2.0-flash", contents="hi")
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertEqual(span.attributes.get("gen_ai.request.stream"), True)
 
     def test_span_has_time_to_first_chunk(self):
         self.configure_valid_response(text="hello")
         self.generate_content(model="gemini-2.0-flash", contents="hi")
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         ttfc = span.attributes.get("gen_ai.response.time_to_first_chunk")
         self.assertIsNotNone(ttfc)
         self.assertIsInstance(ttfc, float)
@@ -81,8 +81,12 @@ class StreamingTestCase(TestCase):
             self.generate_content(
                 model="gemini-2.0-flash", contents="Does this work?"
             )
-            self.otel.assert_has_span_named("chat gemini-2.0-flash")
-            span = self.otel.get_span_named("chat gemini-2.0-flash")
+            self.otel.assert_has_span_named(
+                "generate_content gemini-2.0-flash"
+            )
+            span = self.otel.get_span_named(
+                "generate_content gemini-2.0-flash"
+            )
             self.assertEqual(
                 span.attributes["custom_extra_attribute_key"],
                 "extra_attribute_value",
@@ -99,7 +103,7 @@ class StreamingTestCase(TestCase):
         self.assertEqual(len(responses), 2)
         self.assertEqual(responses[0].text, "First response")
         self.assertEqual(responses[1].text, "Second response")
-        self.otel.assert_has_span_named("chat gemini-2.0-flash")
+        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
         self.otel.assert_has_event_named(
             "gen_ai.client.inference.operation.details"
         )
@@ -120,8 +124,8 @@ class StreamingTestCase(TestCase):
 
         self.generate_content(model="gemini-2.0-flash", contents="Some input")
 
-        self.otel.assert_has_span_named("chat gemini-2.0-flash")
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        self.otel.assert_has_span_named("generate_content gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 3)
         self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 5)
 
@@ -153,7 +157,7 @@ class StreamingTestCase(TestCase):
             )
             self.assertEqual(
                 event.attributes["gen_ai.operation.name"],
-                "chat",
+                "generate_content",
             )
             self.assertEqual(
                 event.attributes["gen_ai.request.model"],
@@ -178,7 +182,7 @@ class StreamingTestCase(TestCase):
         with self.assertRaises(RuntimeError):
             self.generate_content(model="gemini-2.0-flash", contents="Hello")
 
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(span.attributes.get("error.type"), "RuntimeError")
         # Partial token data should still be recorded from the chunk
@@ -193,7 +197,7 @@ class StreamingTestCase(TestCase):
 
         self.generate_content(model="gemini-2.0-flash", contents="Hello")
 
-        span = self.otel.get_span_named("chat gemini-2.0-flash")
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
         self.assertIsNotNone(span)
         self.assertEqual(
             span.attributes.get("error.type"),
