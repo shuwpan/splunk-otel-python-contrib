@@ -40,6 +40,7 @@ from opentelemetry.util.genai.types import (
 from .generate_content import (
     _determine_genai_system,
     _get_vertexai_system_name,
+    _provider_name_from_system,
 )
 
 _logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ def _build_embedding_invocation(
 
     invocation = EmbeddingInvocation(
         system=genai_system,
-        provider="google",
+        provider=_provider_name_from_system(genai_system),
         framework="google-genai-sdk",
         request_model=model,
         input_texts=input_texts,

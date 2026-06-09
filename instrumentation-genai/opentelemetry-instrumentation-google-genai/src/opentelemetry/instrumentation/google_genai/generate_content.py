@@ -845,6 +845,13 @@ class _StreamFinalizer:
             )
         except Exception:  # pragma: no cover - defensive
             _logger.debug("Stream finalizer failed", exc_info=True)
+            try:
+                self._handler.stop_llm(self._invocation)
+            except Exception:  # pragma: no cover - defensive
+                _logger.debug(
+                    "Failed to end stream invocation after finalizer failure",
+                    exc_info=True,
+                )
 
     def _handle_error(self, error):
         if self._finished:

@@ -203,3 +203,20 @@ class StreamingTestCase(TestCase):
             span.attributes.get("error.type"),
             "NoCandidatesError",
         )
+
+    def test_accumulated_response_failure_still_ends_span(self):
+        self.configure_valid_response(text="hello")
+        from opentelemetry.instrumentation.google_genai import (
+            generate_content,
+        )
+
+        with patch.object(
+            generate_content,
+            "_build_accumulated_response",
+            side_effect=RuntimeError("aggregation failed"),
+        ):
+            self.generate_content(model="gemini-2.0-flash", contents="Hello")
+
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        self.assertIsNotNone(span)
+        self.assertIsNotNone(span.end_time)

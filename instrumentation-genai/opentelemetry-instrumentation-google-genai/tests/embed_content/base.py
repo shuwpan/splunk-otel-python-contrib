@@ -216,7 +216,19 @@ class EmbedContentSharedTests(EmbedContentTestCase):
         self.embed_content(model="gemini-embedding-001", contents="hi")
         span = self.otel.get_span_named("embeddings gemini-embedding-001")
         self.assertIsNotNone(span)
-        self.assertEqual(span.attributes.get("gen_ai.provider.name"), "google")
+        self.assertEqual(
+            span.attributes.get("gen_ai.provider.name"), "gcp.gemini"
+        )
+
+    def test_span_has_vertex_provider_name_attribute(self):
+        self.set_use_vertex(True)
+        self.configure_embed_response()
+        self.embed_content(model="gemini-embedding-001", contents="hi")
+        span = self.otel.get_span_named("embeddings gemini-embedding-001")
+        self.assertIsNotNone(span)
+        self.assertEqual(
+            span.attributes.get("gen_ai.provider.name"), "gcp.vertex_ai"
+        )
 
     def test_span_has_framework_attribute(self):
         self.configure_embed_response()

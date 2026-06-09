@@ -488,8 +488,12 @@ def test_embed_content_span_attributes(embed_content, model, otel_mocker):
     assert span is not None
     assert span.attributes.get("gen_ai.operation.name") == "embeddings"
     assert span.attributes.get("gen_ai.request.model") == model
-    assert span.attributes.get("gen_ai.system") in ("gemini", "vertex_ai")
-    assert span.attributes.get("gen_ai.provider.name") == "google"
+    system = span.attributes.get("gen_ai.system")
+    assert system in ("gemini", "vertex_ai")
+    expected_provider = (
+        "gcp.vertex_ai" if system == "vertex_ai" else "gcp.gemini"
+    )
+    assert span.attributes.get("gen_ai.provider.name") == expected_provider
     assert span.attributes.get("gen_ai.framework") == "google-genai-sdk"
     assert span.attributes.get("gen_ai.embeddings.dimension.count") == len(
         response.embeddings[0].values
