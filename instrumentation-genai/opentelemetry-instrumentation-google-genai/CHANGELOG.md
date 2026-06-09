@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
--Add `gen_ai.usage.cache_read.input_tokens` attribute to capture cached tokens on spans/events when the experimental sem conv flag is set. ([#4313](https://github.com/open-telemetry/opentelemetry-python-contrib/pull/4313))
-- Shorten Google GenAI e2e cassette filenames so the repository can be checked out on Windows runners.
+- Migrate to `TelemetryHandler` / `LLMInvocation` with streaming support (HYBIM-663, HYBIM-674).
+- Add automatic instrumentation of callable tool functions passed in `config.tools` with `execute_tool` child spans and `gen_ai.tool.definitions` span attribute (opt-in via `OTEL_INSTRUMENTATION_GENAI_CAPTURE_TOOL_DEFINITIONS=true`) (HYBIM-675).
+- Align `generate_content` spans with GenAI semconv operation/provider names, ensure successful model responses always end their LLM span even if response telemetry conversion fails, and isolate tool-call telemetry capture failures from application tool execution.
+- Align `embed_content` spans with Google GenAI semconv provider names and ensure stream finalization ends the LLM span even if accumulated response aggregation fails.
 
 ## Version 0.7b0 (2026-02-20)
 - Fix bug in how tokens are counted when using the streaming `generateContent` method.  ([#4152](https://github.com/open-telemetry/opentelemetry-python-contrib/pull/4152)).

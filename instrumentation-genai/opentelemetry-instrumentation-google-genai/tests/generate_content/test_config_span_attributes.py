@@ -105,14 +105,15 @@ class ConfigSpanAttributesTestCase(TestCase):
         span = self.generate_and_get_span(
             config={"system_instruction": "Yadda yadda yadda"}
         )
+        # The dedicated GenAI semantic convention key for system instructions
+        # MUST NOT be populated by the legacy custom-config path.
         self.assertNotIn(
             "gcp.gen_ai.operation.config.system_instruction", span.attributes
         )
         self.assertNotIn("gen_ai.request.system_instruction", span.attributes)
-        for key in span.attributes:
-            value = span.attributes[key]
-            if isinstance(value, str):
-                self.assertNotIn("Yadda yadda yadda", value)
+        # NOTE: with content capture enabled, the system instruction WILL
+        # appear on the ``gen_ai.system_instructions`` span attribute via the
+        # util-genai SpanEmitter — that is expected and not exercised here.
 
     @mock.patch.dict(
         os.environ, {"OTEL_GOOGLE_GENAI_GENERATE_CONTENT_CONFIG_INCLUDES": "*"}

@@ -53,3 +53,51 @@ class TestGenerateContentAsyncStreamingWithStreamedResults(
 ):
     def generate_content(self, *args, **kwargs):
         return self.generate_content_stream(*args, **kwargs)
+
+
+class TestAsyncStreamEarlyBreak(AsyncStreamingMixin, StreamingTestCase):
+    """Tests that verify span finalization when the async stream is not fully consumed."""
+
+    def generate_content(self, *args, **kwargs):
+        return self.generate_content_stream(*args, **kwargs)
+
+    def test_early_break_finalizes_span_after_cleanup(self):
+        self.configure_valid_response(text="First chunk")
+        self.configure_valid_response(text="Second chunk")
+
+        async def _break_after_first():
+            stream = await self.client.aio.models.generate_content_stream(
+                model="gemini-2.0-flash", contents="Hello"
+            )
+            async for chunk in stream:
+                break  # consume only the first chunk
+            # Drop last reference so __del__ fires.
+            del stream
+            import gc
+
+            gc.collect()
+
+        asyncio.run(_break_after_first())
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        self.assertIsNotNone(span)
+        self.assertIsNotNone(span.end_time)
+
+    def test_explicit_aclose_finalizes_span(self):
+        self.configure_valid_response(text="First chunk")
+        self.configure_valid_response(text="Second chunk")
+
+        async def _aclose_after_first():
+            stream = await self.client.aio.models.generate_content_stream(
+                model="gemini-2.0-flash", contents="Hello"
+            )
+            first = await stream.__anext__()
+            self.assertEqual(first.text, "First chunk")
+            await stream.aclose()
+
+        asyncio.run(_aclose_after_first())
+        span = self.otel.get_span_named("generate_content gemini-2.0-flash")
+        self.assertIsNotNone(span)
+        self.assertIsNotNone(span.end_time)
+        self.assertIsNotNone(
+            span.attributes.get("gen_ai.response.time_to_first_chunk")
+        )
